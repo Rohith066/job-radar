@@ -1,0 +1,561 @@
+"""Job Radar — main orchestrator and CLI entry point.
+
+Improvements over the original watcher.py:
+- Modular source architecture (each source is an independent class)
+- SQLite state (no more unboundedly growing JSON files)
+- Concurrent main-source fetching via ThreadPoolExecutor
+- Per-platform semaphores in boards mode
+- HTML emails + optional Slack/Discord webhooks
+- Structured logging (replace print statements)
+- Rich CLI output with live progress
+- Score-based job ranking
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import logging
+import os
+import sys
+import threading
+import time
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Optional
+
+from .classifier import is_match, classify
+from .profile import skill_bonus
+from .config import Config
+from .database import Database
+from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNotifier
+from .sources.base import Job, is_us_location
+from .sources.eightfold import EightfoldSource
+from .sources.amazon import AmazonSource
+from .sources.goldman import GoldmanSachsSource
+from .sources.ibm import IBMSource
+from .sources.oracle import OracleSource
+from .sources.greenhouse import GreenhouseSource, _board_id as gh_board_id
+from .sources.lever import LeverSource, _board_id as lever_board_id
+from .sources.smartrecruiters import SmartRecruitersSource, _board_id as sr_board_id
+from .sources.workday import WorkdaySource, _board_id as wd_board_id
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+
+SUPPORTED_BOARD_PLATFORMS = ("greenhouse", "lever", "smartrecruiters", "workday")
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Logging setup
+# ---------------------------------------------------------------------------
+
+def setup_logging(verbose: bool = False) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    fmt = "%(asctime)s %(levelname)-7s %(name)s — %(message)s"
+    logging.basicConfig(level=level, format=fmt, datefmt="%H:%M:%S")
+    # Quiet noisy third-party loggers
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+
+
+# ---------------------------------------------------------------------------
+# Board CSV loader
+# ---------------------------------------------------------------------------
+
+def load_boards_csv(path: str) -> list[dict]:
+    raw = (path or "").strip()
+    if not raw:
+        raise FileNotFoundError("No boards CSV path specified.")
+
+    p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        for base in (Path.cwd(), Path(ROOT_DIR)):
+            candidate = base / p
+            if candidate.exists():
+                p = candidate
+                break
+
+    if not p.exists():
+        raise FileNotFoundError(f"Boards CSV not found: {path}")
+
+    rows: list[dict] = []
+    with open(p, encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            company = (r.get("company_name") or r.get("company") or "").strip()
+            platform = (r.get("platform") or "").strip().lower()
+            url = (r.get("board_url") or r.get("url") or "").strip()
+            ok_val = (r.get("ok") or "").strip().lower()
+            if ok_val and ok_val not in ("true", "1", "yes"):
+                continue
+            if not company or not platform or not url:
+                continue
+            rows.append({"company": company, "platform": platform, "board_url": url.rstrip("/")})
+
+    # Deduplicate on (platform, url)
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for r in rows:
+        k = (r["platform"], r["board_url"])
+        if k not in seen:
+            seen.add(k)
+            deduped.append(r)
+
+    return deduped
+
+
+def _resolve_boards_csv(cfg_path: str) -> str:
+    """Try several fallback locations for the boards CSV."""
+    candidates = [
+        cfg_path,
+        os.environ.get("BOARDS_CSV", ""),
+        "data/boards/JOB_BOARDS_PURE_WORKING_SUPPORTED_round2.csv",
+        "data/boards/JOB_BOARDS_PURE_WORKING_round2.csv",
+        "data/boards/JOB_BOARDS_OK_PRODUCTION.csv",
+    ]
+    for raw in candidates:
+        if not raw:
+            continue
+        p = Path(os.path.expanduser(raw))
+        if not p.is_absolute():
+            for base in (Path.cwd(), Path(ROOT_DIR)):
+                candidate = base / p
+                if candidate.exists():
+                    return str(candidate)
+        elif p.exists():
+            return str(p)
+    raise FileNotFoundError("Could not locate a boards CSV file. Specify --boards-csv or set BOARDS_CSV.")
+
+
+# ---------------------------------------------------------------------------
+# Notifier factory
+# ---------------------------------------------------------------------------
+
+def build_notifier(cfg: Config) -> CompositeNotifier:
+    notifiers = []
+
+    email = EmailNotifier(
+        user=cfg.email.user,
+        password=cfg.email.password,
+        to=cfg.email.to,
+        smtp_host=cfg.email.smtp_host,
+        smtp_port=cfg.email.smtp_port,
+    )
+    if email.is_configured():
+        notifiers.append(email)
+    else:
+        log.warning("Email not configured — no email alerts will be sent.")
+
+    slack = SlackNotifier(cfg.slack.webhook_url)
+    if slack.is_configured():
+        notifiers.append(slack)
+
+    discord = DiscordNotifier(cfg.discord.webhook_url)
+    if discord.is_configured():
+        notifiers.append(discord)
+
+    return CompositeNotifier(notifiers)
+
+
+# ---------------------------------------------------------------------------
+# Main mode: company career pages
+# ---------------------------------------------------------------------------
+
+def run_main(cfg: Config, db: Database, notifier: CompositeNotifier, *, dry_run: bool, no_notify: bool, test_notify: bool) -> None:
+    """Fetch jobs from configured company sources concurrently."""
+    timeout = cfg.http_timeout
+
+    # Build source list based on config
+    sources = []
+    if cfg.source("microsoft").enabled:
+        sources.append(EightfoldSource("microsoft", max_jobs=cfg.source("microsoft").max_jobs))
+    if cfg.source("nvidia").enabled:
+        sources.append(EightfoldSource("nvidia", max_jobs=cfg.source("nvidia").max_jobs))
+    if cfg.source("amazon").enabled:
+        sources.append(AmazonSource(max_jobs=cfg.source("amazon").max_jobs))
+    if cfg.source("goldman_sachs").enabled:
+        sources.append(GoldmanSachsSource(max_jobs=cfg.source("goldman_sachs").max_jobs))
+    if cfg.source("ibm").enabled:
+        sources.append(IBMSource(max_jobs=cfg.source("ibm").max_jobs))
+    if cfg.source("oracle").enabled:
+        sources.append(OracleSource(max_jobs=cfg.source("oracle").max_jobs))
+
+    if not sources:
+        log.warning("No sources enabled.")
+        return
+
+    log.info("Running MAIN mode — %d source(s)", len(sources))
+
+    # Fetch all sources concurrently
+    all_jobs: list[Job] = []
+    errors: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=min(len(sources), 6)) as pool:
+        future_map = {
+            pool.submit(_fetch_source, src, db, timeout): src.name
+            for src in sources
+        }
+        for fut in as_completed(future_map):
+            src_name = future_map[fut]
+            try:
+                jobs = fut.result()
+                all_jobs.extend(jobs)
+                log.info("%-20s fetched %d jobs", src_name, len(jobs))
+            except Exception as exc:
+                err = f"{src_name}: {type(exc).__name__}: {exc}"
+                errors.append(err)
+                log.error("Source failed — %s", err)
+
+    _dispatch_results(
+        all_jobs=all_jobs, errors=errors, db=db, notifier=notifier,
+        mode="main", dry_run=dry_run, no_notify=no_notify, test_notify=test_notify,
+        cfg=cfg,
+    )
+
+
+def _fetch_source(source, db: Database, timeout: int) -> list[Job]:
+    seen_keys = db.get_seen_keys(source.name)
+    return source.fetch(seen_keys=seen_keys, timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Boards mode: ATS board sweep
+# ---------------------------------------------------------------------------
+
+_BOARD_SEMAPHORES: dict[str, threading.Semaphore] = {
+    "greenhouse": threading.Semaphore(8),
+    "lever": threading.Semaphore(8),
+    "smartrecruiters": threading.Semaphore(6),
+    "workday": threading.Semaphore(4),
+}
+
+
+def run_boards(
+    cfg: Config,
+    db: Database,
+    notifier: CompositeNotifier,
+    *,
+    boards_csv: str,
+    batch_size: int,
+    timeout: int,
+    workers: int,
+    dry_run: bool,
+    no_notify: bool,
+    test_notify: bool,
+    run_until_wrap: bool = False,
+    max_iterations: int = 2000,
+    export_dead_csv: str = "",
+) -> None:
+    boards = load_boards_csv(boards_csv)
+    boards = [b for b in boards if b.get("platform") in SUPPORTED_BOARD_PLATFORMS]
+
+    if not boards:
+        log.error("No supported boards found in CSV.")
+        return
+
+    platform_counts = Counter(b["platform"] for b in boards)
+    log.info(
+        "Boards CSV: %d supported rows | %s",
+        len(boards),
+        " ".join(f"{p}={c}" for p, c in sorted(platform_counts.items())),
+    )
+
+    cursor_key = "boards_main"
+    n = len(boards)
+
+    def run_one_batch() -> int:
+        cursor = db.get_cursor(cursor_key)
+        start = cursor % n
+        end = min(start + max(batch_size, 1), n)
+        batch = boards[start:end]
+
+        log.info("Processing batch [%d:%d] of %d boards", start, end, n)
+
+        t0 = time.time()
+        all_jobs, errors = _process_boards_batch(batch, db, timeout, workers)
+        elapsed = time.time() - t0
+        log.info("Batch done in %.1fs — %d jobs fetched, %d errors", elapsed, len(all_jobs), len(errors))
+
+        for err in errors:
+            log.warning("Board error: %s", err)
+
+        _dispatch_results(
+            all_jobs=all_jobs, errors=errors, db=db, notifier=notifier,
+            mode="boards", dry_run=dry_run, no_notify=no_notify, test_notify=test_notify,
+            cfg=cfg,
+        )
+
+        new_cursor = end if end < n else 0
+        if not dry_run:
+            db.set_cursor(cursor_key, new_cursor)
+            if export_dead_csv:
+                db.export_dead_boards_csv(export_dead_csv)
+
+        return new_cursor
+
+    if run_until_wrap:
+        for it in range(1, max_iterations + 1):
+            cur = run_one_batch()
+            log.info("[%d] cursor=%d", it, cur)
+            if cur == 0:
+                log.info("Full sweep complete (cursor wrapped to 0).")
+                break
+    else:
+        run_one_batch()
+
+
+def _process_boards_batch(
+    batch: list[dict], db: Database, timeout: int, workers: int
+) -> tuple[list[Job], list[str]]:
+    all_jobs: list[Job] = []
+    errors: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [
+            pool.submit(_process_one_board, b, db, timeout)
+            for b in batch
+        ]
+        for fut in as_completed(futures):
+            try:
+                jobs, err = fut.result()
+                if err:
+                    errors.append(err)
+                all_jobs.extend(jobs)
+            except Exception as exc:
+                errors.append(f"Board thread error: {type(exc).__name__}: {exc}")
+
+    return all_jobs, errors
+
+
+def _board_source_for(b: dict) -> Optional[object]:
+    platform = b["platform"]
+    company = b["company"]
+    url = b["board_url"]
+    if platform == "greenhouse":
+        return GreenhouseSource(company, url)
+    if platform == "lever":
+        return LeverSource(company, url)
+    if platform == "smartrecruiters":
+        return SmartRecruitersSource(company, url)
+    if platform == "workday":
+        return WorkdaySource(company, url)
+    return None
+
+
+def _get_board_id(b: dict) -> str:
+    platform = b["platform"]
+    url = b["board_url"]
+    if platform == "greenhouse":
+        return gh_board_id(url)
+    if platform == "lever":
+        return lever_board_id(url)
+    if platform == "smartrecruiters":
+        return sr_board_id(url)
+    if platform == "workday":
+        return wd_board_id(url)
+    return f"{platform}:"
+
+
+def _process_one_board(b: dict, db: Database, timeout: int) -> tuple[list[Job], Optional[str]]:
+    import requests
+
+    platform = b["platform"]
+    company = b["company"]
+    url = b["board_url"]
+    board_id = _get_board_id(b)
+
+    if db.is_board_dead(board_id):
+        return [], None
+
+    source = _board_source_for(b)
+    if source is None:
+        return [], None
+
+    sem = _BOARD_SEMAPHORES.get(platform)
+    t0 = time.time()
+
+    try:
+        with sem:
+            jobs = source.fetch(seen_keys=set(), timeout=timeout)
+
+        elapsed = time.time() - t0
+
+        # Bootstrap: if this is the first time we see this board, don't emit jobs
+        is_first_run = not db.is_board_bootstrapped(board_id)
+        if is_first_run:
+            db.upsert_board(board_id=board_id, platform=platform, company=company, url=url, job_count=len(jobs))
+            log.debug("Board bootstrapped: %s (%d jobs suppressed)", board_id, len(jobs))
+            return [], None
+
+        db.upsert_board(board_id=board_id, platform=platform, company=company, url=url, job_count=len(jobs))
+        return jobs, None
+
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status in (404, 410):
+            db.upsert_board(board_id=board_id, platform=platform, company=company, url=url,
+                            status="dead", fail_reason=f"HTTP {status}")
+            return [], f"DEAD {board_id}: HTTP {status}"
+        return [], f"{board_id}: HTTPError {status}: {exc}"
+
+    except Exception as exc:
+        return [], f"{board_id}: {type(exc).__name__}: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Shared result dispatcher
+# ---------------------------------------------------------------------------
+
+def _dispatch_results(
+    *,
+    all_jobs: list[Job],
+    errors: list[str],
+    db: Database,
+    notifier: CompositeNotifier,
+    mode: str,
+    dry_run: bool,
+    no_notify: bool,
+    test_notify: bool,
+    cfg: Config,
+) -> None:
+    # Filter by classification + location
+    matched = [
+        j for j in all_jobs
+        if j.label in ("yes", "maybe") and (
+            not cfg.filter.require_us_location or is_us_location(j.location)
+        )
+    ]
+
+    # Apply resume skill-match bonus — boosts jobs mentioning Rohith's tools
+    # (runs on title; when description text is available, pass it too)
+    for j in matched:
+        bonus = skill_bonus(j.title)
+        j.score = min(100, j.score + bonus)
+
+    yes_jobs = sorted([j for j in matched if j.label == "yes"], key=lambda j: j.score, reverse=True)
+    maybe_jobs = sorted([j for j in matched if j.label == "maybe"], key=lambda j: j.score, reverse=True)
+
+    log.info("Matched: %d yes, %d maybe", len(yes_jobs), len(maybe_jobs))
+
+    if test_notify:
+        sample_yes = yes_jobs[:2]
+        sample_maybe = maybe_jobs[:1]
+        if not (sample_yes or sample_maybe):
+            log.error("No matching jobs found for test notification.")
+            sys.exit(1)
+        if not no_notify:
+            errs = notifier.notify(sample_yes, sample_maybe, subject_prefix=f"[TEST Job Radar]", mode=mode)
+            for e in errs:
+                log.error("Notifier error: %s", e)
+        else:
+            log.info("[TEST] Would notify: %d yes + %d maybe", len(sample_yes), len(sample_maybe))
+        return
+
+    # Determine which jobs are new
+    new_yes = [j for j in yes_jobs if db.is_new_job(j.key)]
+    new_maybe = [j for j in maybe_jobs if db.is_new_job(j.key)]
+
+    log.info("New jobs: %d yes, %d maybe", len(new_yes), len(new_maybe))
+
+    if new_yes or new_maybe:
+        if no_notify:
+            log.info("[no-notify] Would alert: %d yes + %d maybe", len(new_yes), len(new_maybe))
+        else:
+            errs = notifier.notify(new_yes, new_maybe, subject_prefix="[Job Radar]", mode=mode)
+            for e in errs:
+                log.error("Notifier error: %s", e)
+    else:
+        log.info("No new matching jobs.")
+
+    # Persist all seen jobs to DB
+    if not dry_run:
+        for j in matched:
+            db.mark_job_seen(
+                key=j.key, source=j.source, company=j.company, title=j.title,
+                location=j.location, url=j.url, posted=j.posted,
+                score=j.score, label=j.label,
+            )
+        log.debug("Saved %d jobs to database.", len(matched))
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="job-radar",
+        description="Job Radar — aggregate and alert on new engineering jobs.",
+    )
+    p.add_argument("--config", default="config.yaml", help="Path to YAML config file (default: config.yaml)")
+    p.add_argument("--mode", default="main", choices=["main", "boards"], help="Run mode (default: main)")
+    p.add_argument("--dry-run", action="store_true", help="Fetch jobs but do not save state or send notifications.")
+    p.add_argument("--no-notify", action="store_true", help="Save state but skip all notifications.")
+    p.add_argument("--test-notify", action="store_true", help="Send a sample notification without updating state.")
+    p.add_argument("--verbose", "-v", action="store_true", help="Enable DEBUG logging.")
+
+    # Boards options
+    bg = p.add_argument_group("Boards mode options")
+    bg.add_argument("--boards-csv", default="", help="Path to boards CSV file.")
+    bg.add_argument("--boards-batch-size", type=int, default=0, help="Boards per run (0 = use config value).")
+    bg.add_argument("--boards-timeout", type=int, default=0, help="HTTP timeout for boards (0 = use config value).")
+    bg.add_argument("--boards-workers", type=int, default=0, help="Parallel board workers (0 = use config value).")
+    bg.add_argument("--boards-run-until-wrap", action="store_true", help="Run batches until cursor wraps (full sweep).")
+    bg.add_argument("--boards-max-iterations", type=int, default=2000, help="Safety cap for --boards-run-until-wrap.")
+    bg.add_argument("--export-dead-csv", default="", help="Export dead boards to a CSV file.")
+
+    return p
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    setup_logging(args.verbose)
+
+    cfg = Config.load(args.config)
+
+    db = Database(cfg.database.path)
+
+    notifier = build_notifier(cfg)
+
+    try:
+        if args.mode == "main":
+            run_main(
+                cfg=cfg, db=db, notifier=notifier,
+                dry_run=args.dry_run, no_notify=args.no_notify, test_notify=args.test_notify,
+            )
+        else:
+            # Boards mode — resolve CSV and override config values if CLI flags given
+            boards_csv = args.boards_csv or cfg.boards.csv
+            try:
+                boards_csv = _resolve_boards_csv(boards_csv)
+            except FileNotFoundError as exc:
+                log.error("%s", exc)
+                sys.exit(1)
+
+            batch_size = args.boards_batch_size or cfg.boards.batch_size
+            timeout = args.boards_timeout or cfg.boards.timeout
+            workers = args.boards_workers or cfg.boards.workers
+
+            run_boards(
+                cfg=cfg, db=db, notifier=notifier,
+                boards_csv=boards_csv,
+                batch_size=batch_size,
+                timeout=timeout,
+                workers=workers,
+                dry_run=args.dry_run,
+                no_notify=args.no_notify,
+                test_notify=args.test_notify,
+                run_until_wrap=args.boards_run_until_wrap,
+                max_iterations=args.boards_max_iterations,
+                export_dead_csv=args.export_dead_csv,
+            )
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

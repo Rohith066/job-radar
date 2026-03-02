@@ -1,0 +1,64 @@
+# Job Radar Configuration
+# Copy this file to config.yaml and fill in your values.
+# Environment variables always override YAML values.
+# ------------------------------------------------------------------
+
+# Email notifications (Gmail recommended)
+email:
+  user: ""           # your.email@gmail.com
+  password: ""       # Gmail App Password (not your regular password)
+  to: ""             # recipient email
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+
+# Optional: Slack webhook (post to a channel)
+slack:
+  webhook_url: ""    # https://hooks.slack.com/services/...
+
+# Optional: Discord webhook (post to a channel)
+discord:
+  webhook_url: ""    # https://discord.com/api/webhooks/...
+
+# Database — SQLite file for state persistence
+database:
+  path: state/jobs.db
+
+# Job filtering
+filter:
+  require_us_location: true   # Only alert on US-based jobs
+
+# HTTP timeout for all requests (seconds)
+http_timeout: 30
+
+# Boards sweep configuration (--mode boards)
+boards:
+  csv: ""              # Path to boards CSV; override with BOARDS_CSV env var
+  batch_size: 50       # How many boards to process per run
+  workers: 12          # Concurrent board-fetch threads
+  timeout: 30          # Per-board HTTP timeout
+
+# Per-source caps (set enabled: false to skip a source)
+sources:
+  microsoft:
+    enabled: true
+    max_jobs: 300
+
+  nvidia:
+    enabled: true
+    max_jobs: 300
+
+  amazon:
+    enabled: true
+    max_jobs: 300
+
+  goldman_sachs:
+    enabled: true
+    max_jobs: 200
+
+  ibm:
+    enabled: true
+    max_jobs: 200
+
+  oracle:
+    enabled: true
+    max_jobs: 200
