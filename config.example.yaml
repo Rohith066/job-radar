@@ -62,3 +62,29 @@ sources:
   oracle:
     enabled: true
     max_jobs: 200
+
+  meta:
+    enabled: true
+    max_jobs: 200
+
+  google:
+    enabled: true
+    max_jobs: 200
+
+  apple:
+    enabled: true
+    max_jobs: 200
+
+  netflix:
+    enabled: true
+    max_jobs: 200
+
+  stripe:
+    enabled: true
+    max_jobs: 200
+
+  # LinkedIn: works locally but GitHub Actions cloud IPs are often blocked.
+  # Set enabled: false if you see 429/403 errors in Actions logs.
+  linkedin:
+    enabled: true
+    max_jobs: 100

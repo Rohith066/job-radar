@@ -28,6 +28,10 @@ PROFILE = {
         "Machine Learning Engineer",
         "Applied Scientist",
         "ML/AI Data Engineer",
+        "Data Warehouse Engineer",
+        "PRODUCT ANALYST",
+        "LLM PROMPT ENGINEER",
+        "LLM ENGINEER",
     ],
 }
 

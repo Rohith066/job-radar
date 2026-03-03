@@ -33,12 +33,21 @@ _PAYLOAD: dict[str, Any] = {
                         ]
                     }
                 },
-                {"term": {"field_keyword_18": "Entry Level"}},
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"field_keyword_18": "Entry Level"}},
+                            {"term": {"field_keyword_18": "Associate"}},
+                            {"term": {"field_keyword_18": "Mid-Level"}},
+                            {"term": {"field_keyword_18": "Experienced"}},
+                        ]
+                    }
+                },
                 {"term": {"field_keyword_05": "United States"}},
             ]
         }
     },
-    "size": 30,
+    "size": 100,
     "sort": [{"dcdate": "desc"}, {"_score": "desc"}],
     "lang": "zz",
     "localeSelector": {},

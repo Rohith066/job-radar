@@ -233,6 +233,55 @@ class Database:
     # Reporting helpers
     # -------------------------------------------------------------------------
 
+    def expire_old_jobs(self, days: int = 60) -> int:
+        """Delete jobs not seen within the last `days` days. Returns count deleted."""
+        with self._tx() as conn:
+            cur = conn.execute(
+                "DELETE FROM jobs WHERE last_seen < datetime('now', ?)",
+                (f"-{days} days",),
+            )
+            deleted = cur.rowcount
+        if deleted:
+            log.info("Expired %d stale job(s) older than %d days", deleted, days)
+        return deleted
+
+    def is_duplicate_title(self, company: str, title: str) -> bool:
+        """Return True if we already have a job with the same company+title in the DB."""
+        row = self._conn.execute(
+            "SELECT 1 FROM jobs WHERE lower(company)=lower(?) AND lower(title)=lower(?) LIMIT 1",
+            (company.strip(), title.strip()),
+        ).fetchone()
+        return row is not None
+
+    def get_stats(self) -> dict:
+        """Return summary statistics used by the weekly health-check email."""
+        total = self._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        new_24h = self._conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE first_seen >= datetime('now','-1 day')"
+        ).fetchone()[0]
+        new_7d = self._conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE first_seen >= datetime('now','-7 days')"
+        ).fetchone()[0]
+        yes_count = self._conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE label='yes'"
+        ).fetchone()[0]
+        maybe_count = self._conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE label='maybe'"
+        ).fetchone()[0]
+        last_activity = self._conn.execute(
+            "SELECT MAX(last_seen) FROM jobs"
+        ).fetchone()[0] or "never"
+        board_stats = self.get_board_stats()
+        return {
+            "total_jobs": total,
+            "new_24h": new_24h,
+            "new_7d": new_7d,
+            "yes_count": yes_count,
+            "maybe_count": maybe_count,
+            "last_activity": last_activity,
+            "boards": board_stats,
+        }
+
     def export_dead_boards_csv(self, out_path: str) -> None:
         import csv
 

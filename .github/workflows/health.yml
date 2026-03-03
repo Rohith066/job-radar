@@ -1,0 +1,32 @@
+name: Job Radar — Weekly Health Check
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"   # Every Monday at 9am ET (13:00 UTC)
+  workflow_dispatch:         # Manual trigger anytime
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send health check email
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+        run: python -m src.main --mode main --health-check

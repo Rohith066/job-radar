@@ -21,6 +21,7 @@ import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +36,12 @@ from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
 from .sources.ibm import IBMSource
 from .sources.oracle import OracleSource
+from .sources.meta import MetaSource
+from .sources.google import GoogleSource
+from .sources.apple import AppleSource
+from .sources.netflix import NetflixSource
+from .sources.stripe import StripeSource
+from .sources.linkedin import LinkedInSource
 from .sources.greenhouse import GreenhouseSource, _board_id as gh_board_id
 from .sources.lever import LeverSource, _board_id as lever_board_id
 from .sources.smartrecruiters import SmartRecruitersSource, _board_id as sr_board_id
@@ -160,6 +167,50 @@ def build_notifier(cfg: Config) -> CompositeNotifier:
 
 
 # ---------------------------------------------------------------------------
+# Job age filter — drop stale listings older than MAX_JOB_AGE_DAYS
+# ---------------------------------------------------------------------------
+
+MAX_JOB_AGE_DAYS = 30
+
+_DATE_FORMATS = [
+    "%Y-%m-%dT%H:%M:%S%z",
+    "%Y-%m-%dT%H:%M:%SZ",
+    "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%d",
+]
+
+
+def _parse_posted(posted: str) -> Optional[datetime]:
+    for fmt in _DATE_FORMATS:
+        try:
+            dt = datetime.strptime(posted[:26], fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _is_too_old(posted: str, max_days: int = MAX_JOB_AGE_DAYS) -> bool:
+    """Return True if job was posted more than max_days ago. Unknown dates pass through."""
+    dt = _parse_posted(posted)
+    if dt is None:
+        return False  # can't parse → don't filter out
+    return dt < datetime.now(timezone.utc) - timedelta(days=max_days)
+
+
+def _dedup_jobs(jobs: list[Job]) -> list[Job]:
+    """Remove duplicate jobs with identical (company, title) — keeps highest score."""
+    best: dict[tuple, Job] = {}
+    for j in jobs:
+        fp = (j.company.strip().lower(), j.title.strip().lower())
+        if fp not in best or j.score > best[fp].score:
+            best[fp] = j
+    return list(best.values())
+
+
+# ---------------------------------------------------------------------------
 # Main mode: company career pages
 # ---------------------------------------------------------------------------
 
@@ -181,6 +232,18 @@ def run_main(cfg: Config, db: Database, notifier: CompositeNotifier, *, dry_run:
         sources.append(IBMSource(max_jobs=cfg.source("ibm").max_jobs))
     if cfg.source("oracle").enabled:
         sources.append(OracleSource(max_jobs=cfg.source("oracle").max_jobs))
+    if cfg.source("meta").enabled:
+        sources.append(MetaSource(max_jobs=cfg.source("meta").max_jobs))
+    if cfg.source("google").enabled:
+        sources.append(GoogleSource(max_jobs=cfg.source("google").max_jobs))
+    if cfg.source("apple").enabled:
+        sources.append(AppleSource(max_jobs=cfg.source("apple").max_jobs))
+    if cfg.source("netflix").enabled:
+        sources.append(NetflixSource(max_jobs=cfg.source("netflix").max_jobs))
+    if cfg.source("stripe").enabled:
+        sources.append(StripeSource(max_jobs=cfg.source("stripe").max_jobs))
+    if cfg.source("linkedin").enabled:
+        sources.append(LinkedInSource(max_jobs=cfg.source("linkedin").max_jobs))
 
     if not sources:
         log.warning("No sources enabled.")
@@ -192,7 +255,7 @@ def run_main(cfg: Config, db: Database, notifier: CompositeNotifier, *, dry_run:
     all_jobs: list[Job] = []
     errors: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=min(len(sources), 6)) as pool:
+    with ThreadPoolExecutor(max_workers=min(len(sources), 12)) as pool:
         future_map = {
             pool.submit(_fetch_source, src, db, timeout): src.name
             for src in sources
@@ -428,8 +491,21 @@ def _dispatch_results(
         )
     ]
 
-    # Apply resume skill-match bonus — boosts jobs mentioning Rohith's tools
-    # (runs on title; when description text is available, pass it too)
+    # Age filter — drop listings older than MAX_JOB_AGE_DAYS
+    before_age = len(matched)
+    matched = [j for j in matched if not _is_too_old(j.posted)]
+    dropped = before_age - len(matched)
+    if dropped:
+        log.info("Age filter: dropped %d stale job(s) older than %d days", dropped, MAX_JOB_AGE_DAYS)
+
+    # Deduplication — keep only one entry per (company, title) pair
+    before_dedup = len(matched)
+    matched = _dedup_jobs(matched)
+    dupes = before_dedup - len(matched)
+    if dupes:
+        log.info("Dedup: removed %d duplicate(s)", dupes)
+
+    # Apply resume skill-match bonus
     for j in matched:
         bonus = skill_bonus(j.title)
         j.score = min(100, j.score + bonus)
@@ -439,6 +515,9 @@ def _dispatch_results(
 
     log.info("Matched: %d yes, %d maybe", len(yes_jobs), len(maybe_jobs))
 
+    # Summarise source errors for the email footer
+    source_errors = [e for e in errors if e]
+
     if test_notify:
         sample_yes = yes_jobs[:2]
         sample_maybe = maybe_jobs[:1]
@@ -446,14 +525,14 @@ def _dispatch_results(
             log.error("No matching jobs found for test notification.")
             sys.exit(1)
         if not no_notify:
-            errs = notifier.notify(sample_yes, sample_maybe, subject_prefix=f"[TEST Job Radar]", mode=mode)
+            errs = notifier.notify(sample_yes, sample_maybe, subject_prefix=f"[TEST Job Radar]", mode=mode, source_errors=source_errors)
             for e in errs:
                 log.error("Notifier error: %s", e)
         else:
             log.info("[TEST] Would notify: %d yes + %d maybe", len(sample_yes), len(sample_maybe))
         return
 
-    # Determine which jobs are new
+    # Determine which jobs are new (not yet in DB)
     new_yes = [j for j in yes_jobs if db.is_new_job(j.key)]
     new_maybe = [j for j in maybe_jobs if db.is_new_job(j.key)]
 
@@ -463,7 +542,7 @@ def _dispatch_results(
         if no_notify:
             log.info("[no-notify] Would alert: %d yes + %d maybe", len(new_yes), len(new_maybe))
         else:
-            errs = notifier.notify(new_yes, new_maybe, subject_prefix="[Job Radar]", mode=mode)
+            errs = notifier.notify(new_yes, new_maybe, subject_prefix="[Job Radar]", mode=mode, source_errors=source_errors)
             for e in errs:
                 log.error("Notifier error: %s", e)
     else:
@@ -479,10 +558,100 @@ def _dispatch_results(
             )
         log.debug("Saved %d jobs to database.", len(matched))
 
+        # Auto-expiry — clean up jobs not seen in 60 days to keep DB lean
+        db.expire_old_jobs(days=60)
+
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> None:
+    """Send a weekly health-check summary email."""
+    from datetime import datetime, timezone
+    stats = db.get_stats()
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    subject = f"[Job Radar] Weekly Health Check — {ts}"
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+          background:#f5f5f5; margin:0; padding:20px; color:#333; }}
+  .container {{ max-width:600px; margin:0 auto; background:#fff;
+                border-radius:8px; overflow:hidden;
+                box-shadow:0 2px 8px rgba(0,0,0,.1); }}
+  .header {{ background:#1a1a2e; color:#fff; padding:20px 28px; }}
+  .header h1 {{ margin:0; font-size:20px; }}
+  .header p  {{ margin:4px 0 0; font-size:13px; color:#aaa; }}
+  .body {{ padding:24px 28px; }}
+  .stat {{ display:flex; justify-content:space-between; padding:10px 0;
+           border-bottom:1px solid #f0f0f0; font-size:14px; }}
+  .stat-val {{ font-weight:700; color:#1d4ed8; }}
+  .ok {{ color:#16a34a; font-weight:700; }}
+  .footer {{ background:#f9f9f9; border-top:1px solid #eee;
+             padding:14px 28px; font-size:12px; color:#888; }}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>Job Radar ✅ Weekly Health Check</h1>
+    <p>{ts}</p>
+  </div>
+  <div class="body">
+    <p class="ok">Job Radar is running and monitoring 916+ companies for you.</p>
+    <div class="stat"><span>Jobs found (last 24 hrs)</span><span class="stat-val">{stats['new_24h']}</span></div>
+    <div class="stat"><span>Jobs found (last 7 days)</span><span class="stat-val">{stats['new_7d']}</span></div>
+    <div class="stat"><span>Total YES matches in DB</span><span class="stat-val">{stats['yes_count']}</span></div>
+    <div class="stat"><span>Total MAYBE matches in DB</span><span class="stat-val">{stats['maybe_count']}</span></div>
+    <div class="stat"><span>Total jobs tracked</span><span class="stat-val">{stats['total_jobs']}</span></div>
+    <div class="stat"><span>Last job activity</span><span class="stat-val">{stats['last_activity'][:19]}</span></div>
+    <div class="stat"><span>ATS boards tracked</span><span class="stat-val">{stats['boards']['total']} ({stats['boards']['active']} active)</span></div>
+  </div>
+  <div class="footer">Powered by Job Radar — targeting Data Analyst · Data Scientist · Data Engineer</div>
+</div></body></html>"""
+
+    text = (
+        f"Job Radar Weekly Health Check — {ts}\n\n"
+        f"✅ Job Radar is running and monitoring 916+ companies.\n\n"
+        f"Jobs found last 24h : {stats['new_24h']}\n"
+        f"Jobs found last 7d  : {stats['new_7d']}\n"
+        f"Total YES in DB     : {stats['yes_count']}\n"
+        f"Total MAYBE in DB   : {stats['maybe_count']}\n"
+        f"Total jobs tracked  : {stats['total_jobs']}\n"
+        f"Last activity       : {stats['last_activity'][:19]}\n"
+        f"ATS boards tracked  : {stats['boards']['total']} ({stats['boards']['active']} active)\n"
+    )
+
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    for n in notifier._notifiers:
+        if hasattr(n, "smtp_host"):  # EmailNotifier
+            if not n.is_configured():
+                log.warning("Email not configured for health check.")
+                return
+            import smtplib, ssl as _ssl
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = n.user
+            msg["To"] = n.to
+            msg.attach(MIMEText(text, "plain", "utf-8"))
+            msg.attach(MIMEText(html, "html", "utf-8"))
+            try:
+                import certifi
+                ctx = _ssl.create_default_context(cafile=certifi.where())
+            except ImportError:
+                ctx = _ssl.create_default_context()
+            if n.smtp_port == 465:
+                with smtplib.SMTP_SSL(n.smtp_host, n.smtp_port, context=ctx) as s:
+                    s.login(n.user, n.password); s.send_message(msg)
+            else:
+                with smtplib.SMTP(n.smtp_host, n.smtp_port) as s:
+                    s.ehlo(); s.starttls(context=ctx); s.ehlo()
+                    s.login(n.user, n.password); s.send_message(msg)
+            log.info("Health check email sent to %s", n.to)
+            return
+    log.warning("No email notifier configured — health check skipped.")
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -494,6 +663,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true", help="Fetch jobs but do not save state or send notifications.")
     p.add_argument("--no-notify", action="store_true", help="Save state but skip all notifications.")
     p.add_argument("--test-notify", action="store_true", help="Send a sample notification without updating state.")
+    p.add_argument("--health-check", action="store_true", help="Send a weekly health-check summary email and exit.")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable DEBUG logging.")
 
     # Boards options
@@ -522,6 +692,10 @@ def main(argv: Optional[list[str]] = None) -> None:
     notifier = build_notifier(cfg)
 
     try:
+        if args.health_check:
+            run_health_check(cfg=cfg, db=db, notifier=notifier)
+            return
+
         if args.mode == "main":
             run_main(
                 cfg=cfg, db=db, notifier=notifier,

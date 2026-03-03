@@ -42,12 +42,8 @@ def is_us_location(location: str) -> bool:
         return True
     if re.search(r"\bus\b", loc):
         return True
-    # "Remote, US" or "Remote (US)" patterns
-    if "remote" in loc and (
-        re.search(r"\bus\b", loc)
-        or "united states" in loc
-        or re.search(r"\busa\b", loc)
-    ):
+    # Accept any remote job — sources already filter to US at the API level
+    if "remote" in loc:
         return True
     if "washington, dc" in loc or "district of columbia" in loc:
         return True

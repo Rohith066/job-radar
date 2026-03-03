@@ -49,10 +49,15 @@ DATA_STRONG = [
     "statistical analyst",
     "statistical modeler",
     "forecasting analyst",
-    # Platform / Infrastructure (data)
+    # Platform / Infrastructure / Quality (data)
     "data platform engineer",
     "data infrastructure engineer",
     "data reliability engineer",
+    "data quality engineer",
+    "data quality analyst",
+    "data governance",
+    "data management analyst",
+    "data operations analyst",
     "data architect",
     "analytics architect",
     # ETL / Warehouse
@@ -80,6 +85,23 @@ DATA_STRONG = [
     "mlops engineer",
     "ml platform engineer",
     "ai engineer",
+    # LLM / Generative AI (modern AI roles)
+    "llm engineer",
+    "llm data",
+    "prompt engineer",
+    "generative ai engineer",
+    "gen ai engineer",
+    "nlp engineer",
+    "natural language processing engineer",
+    "natural language processing scientist",
+    "computer vision engineer",
+    "computer vision scientist",
+    "multimodal",
+    "foundation model",
+    # Consulting / advisory (data-focused)
+    "analytics consultant",
+    "data consultant",
+    "data advisor",
 ]
 
 # ---------------------------------------------------------------------------
@@ -104,6 +126,18 @@ DATA_WEAK = [
     "kafka",
     "flink",
     "hadoop",
+    # AI/LLM weak signals
+    "generative ai",
+    "gen ai",
+    "large language model",
+    "llm",
+    "nlp",
+    "ai analyst",
+    "ai scientist",
+    # Business/operations data-adjacent
+    "business analyst",
+    "business intelligence analyst",
+    "operations research",
 ]
 
 # ---------------------------------------------------------------------------
@@ -189,6 +223,45 @@ HARD_EXCLUDE_REGEXES = [
 ]
 
 # ---------------------------------------------------------------------------
+# Clearance / citizenship filters — ABSOLUTE, cannot be overridden.
+# Removes jobs that require security clearance or US citizenship.
+# ---------------------------------------------------------------------------
+CLEARANCE_EXCLUDE_PHRASES = [
+    "security clearance",
+    "clearance required",
+    "clearance preferred",
+    "clearance eligible",
+    "active clearance",
+    "active secret",
+    "secret clearance",
+    "top secret",
+    "ts/sci",
+    "ts sci",
+    "sci clearance",
+    "dod clearance",
+    "dod secret",
+    "public trust",
+    "polygraph",
+    "us citizen",
+    "u.s. citizen",
+    "must be a citizen",
+    "citizenship required",
+    "citizenship eligibility",
+    "must hold clearance",
+]
+
+CLEARANCE_EXCLUDE_REGEXES = [
+    r"\bts[/\s\-]?sci\b",       # TS/SCI, TS SCI, TS-SCI
+    r"\btop\s+secret\b",         # Top Secret
+    r"\bpolygraph\b",            # Polygraph
+    r"\bpublic\s+trust\b",       # Public Trust
+    r"\bclearance\b",            # any "clearance" in title
+    r"\bus\s+citizen",           # US citizen / US citizenship
+    r"\bcitizenship\b",          # citizenship requirement
+    r"\bsci\b",                  # SCI in title (often paired with TS)
+]
+
+# ---------------------------------------------------------------------------
 # Seniority tokens — always clamp to "maybe" or "no"
 # ---------------------------------------------------------------------------
 SENIORITY_TOKENS = [
@@ -214,6 +287,16 @@ DATA_SAFETY_NET_OVERRIDES = frozenset([
     "data platform",
     "data infrastructure",
     "data reliability engineer",
+    # Product/program roles that are genuinely data-focused
+    "data product manager",
+    "data program manager",
+    "analytics program manager",
+    # AI roles that may hit SWE-adjacent hard-excludes
+    "generative ai",
+    "gen ai",
+    "llm engineer",
+    "prompt engineer",
+    "ai data engineer",
 ])
 
 
@@ -233,6 +316,16 @@ def classify(title: str) -> ClassifyResult:
     t = _norm(title)
     if not t:
         return ClassifyResult(score=0, label="no")
+
+    # ── ABSOLUTE FILTER: security clearance / citizenship ──────────────────
+    # These are checked first and cannot be overridden by any safety-net.
+    for phrase in CLEARANCE_EXCLUDE_PHRASES:
+        if phrase in t:
+            return ClassifyResult(score=0, label="no")
+    for pat in CLEARANCE_EXCLUDE_REGEXES:
+        if re.search(pat, t):
+            return ClassifyResult(score=0, label="no")
+    # ───────────────────────────────────────────────────────────────────────
 
     # Safety-net overrides that start with "data" but hit a hard-exclude phrase
     is_safety_net = any(override in t for override in DATA_SAFETY_NET_OVERRIDES)

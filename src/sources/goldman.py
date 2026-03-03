@@ -34,7 +34,7 @@ _PAYLOAD: dict[str, Any] = {
     "operationName": "GetRoles",
     "variables": {
         "searchQueryInput": {
-            "page": {"pageSize": 20, "pageNumber": 0},
+            "page": {"pageSize": 50, "pageNumber": 0},
             "sort": {"sortStrategy": "POSTED_DATE", "sortOrder": "DESC"},
             "filters": [
                 {
@@ -42,13 +42,7 @@ _PAYLOAD: dict[str, Any] = {
                     "filters": [
                         {
                             "filter": "United States",
-                            "subFilters": [
-                                {"filter": "New York", "subFilters": [{"filter": "New York", "subFilters": []}]},
-                                {"filter": "California", "subFilters": [{"filter": "San Francisco", "subFilters": []}]},
-                                {"filter": "Massachusetts", "subFilters": [{"filter": "Boston", "subFilters": []}]},
-                                {"filter": "Texas", "subFilters": [{"filter": "Dallas", "subFilters": []}]},
-                                {"filter": "Utah", "subFilters": [{"filter": "Salt Lake City", "subFilters": []}]},
-                            ],
+                            "subFilters": [],
                         }
                     ],
                 },

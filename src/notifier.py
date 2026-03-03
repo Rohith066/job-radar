@@ -85,7 +85,10 @@ _HTML_TEMPLATE = """\
     {yes_section}
     {maybe_section}
   </div>
-  <div class="footer">Powered by Job Radar &mdash; targeting Data Analyst · Data Scientist · Data Engineer</div>
+  <div class="footer">
+    Powered by Job Radar &mdash; targeting Data Analyst · Data Scientist · Data Engineer
+    {error_section}
+  </div>
 </div>
 </body>
 </html>
@@ -105,7 +108,7 @@ _SECTION = """\
 {cards}"""
 
 
-def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str) -> str:
+def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_errors: list[str] | None = None) -> str:
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     candidate_name = PROFILE["name"]
@@ -137,16 +140,25 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str) -> str:
             cards="\n".join(_card(j) for j in maybe_jobs),
         )
 
+    # Error digest footer
+    error_section = ""
+    if source_errors:
+        names = ", ".join(source_errors[:5])
+        error_section = (
+            f'<br><span style="color:#dc2626;">&#9888; {len(source_errors)} source(s) failed this run: {names}</span>'
+        )
+
     return _HTML_TEMPLATE.format(
         timestamp=ts, mode=mode, candidate_name=candidate_name,
         yes_count=len(yes_jobs), maybe_count=len(maybe_jobs),
         total_count=len(yes_jobs) + len(maybe_jobs),
         profile_line=profile_line,
         yes_section=yes_section, maybe_section=maybe_section,
+        error_section=error_section,
     )
 
 
-def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job]) -> str:
+def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job], source_errors: list[str] | None = None) -> str:
     lines: list[str] = []
     if yes_jobs:
         lines.append(f"=== STRONG MATCHES ({len(yes_jobs)}) ===\n")
@@ -162,6 +174,8 @@ def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job]) -> str:
             lines.append(f"[{j.company}] {j.title} | {j.location}{posted}")
             lines.append(f"  Score: {j.score}  {j.url}")
             lines.append("")
+    if source_errors:
+        lines.append(f"\n⚠ {len(source_errors)} source(s) failed: {', '.join(source_errors[:5])}")
     return "\n".join(lines)
 
 
@@ -171,7 +185,7 @@ def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job]) -> str:
 
 class BaseNotifier(ABC):
     @abstractmethod
-    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str, mode: str) -> None:
+    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str, mode: str, source_errors: list[str] | None = None) -> None:
         ...
 
 
@@ -190,7 +204,7 @@ class EmailNotifier(BaseNotifier):
     def is_configured(self) -> bool:
         return bool(self.user and self.password and self.to)
 
-    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main") -> None:
+    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main", source_errors: list[str] | None = None) -> None:
         if not self.is_configured():
             log.warning("Email not configured; skipping.")
             return
@@ -200,8 +214,8 @@ class EmailNotifier(BaseNotifier):
         company_str = ", ".join(companies[:4]) + ("…" if len(companies) > 4 else "")
         subject = f"{subject_prefix} {len(yes_jobs)} match + {len(maybe_jobs)} review — {company_str}"
 
-        html_body = _build_html(yes_jobs, maybe_jobs, mode)
-        text_body = _build_plaintext(yes_jobs, maybe_jobs)
+        html_body = _build_html(yes_jobs, maybe_jobs, mode, source_errors)
+        text_body = _build_plaintext(yes_jobs, maybe_jobs, source_errors)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -245,7 +259,7 @@ class SlackNotifier(BaseNotifier):
     def is_configured(self) -> bool:
         return bool(self.webhook_url)
 
-    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main") -> None:
+    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main", source_errors: list[str] | None = None) -> None:
         if not self.is_configured():
             return
 
@@ -291,7 +305,7 @@ class DiscordNotifier(BaseNotifier):
     def is_configured(self) -> bool:
         return bool(self.webhook_url)
 
-    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main") -> None:
+    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main", source_errors: list[str] | None = None) -> None:
         if not self.is_configured():
             return
 
@@ -328,12 +342,12 @@ class CompositeNotifier:
     def __init__(self, notifiers: list[BaseNotifier]) -> None:
         self._notifiers = notifiers
 
-    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main") -> list[str]:
+    def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main", source_errors: list[str] | None = None) -> list[str]:
         """Send to all notifiers, collecting errors instead of raising."""
         errors: list[str] = []
         for notifier in self._notifiers:
             try:
-                notifier.notify(yes_jobs, maybe_jobs, subject_prefix=subject_prefix, mode=mode)
+                notifier.notify(yes_jobs, maybe_jobs, subject_prefix=subject_prefix, mode=mode, source_errors=source_errors)
             except Exception as exc:
                 log.error("Notifier %s failed: %s", type(notifier).__name__, exc)
                 errors.append(f"{type(notifier).__name__}: {exc}")

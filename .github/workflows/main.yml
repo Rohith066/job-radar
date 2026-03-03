@@ -2,7 +2,7 @@ name: Job Radar — Main Sources
 
 on:
   schedule:
-    - cron: "*/20 * * * *"   # Every 20 minutes
+    - cron: "0 */3 * * *"    # Every 3 hours
   workflow_dispatch:           # Manual trigger
 
 permissions:
