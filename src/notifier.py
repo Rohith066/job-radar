@@ -59,8 +59,18 @@ _HTML_TEMPLATE = """\
   .score-badge {{ display: inline-block; font-size: 11px; font-weight: 700;
                   border-radius: 999px; padding: 2px 8px; margin-left: 8px;
                   vertical-align: middle; }}
-  .badge-yes   {{ background: #dcfce7; color: #15803d; }}
-  .badge-maybe {{ background: #fef9c3; color: #a16207; }}
+  .badge-yes      {{ background: #dcfce7; color: #15803d; }}
+  .badge-maybe    {{ background: #fef9c3; color: #a16207; }}
+  .badge-remote   {{ background: #dbeafe; color: #1e40af; font-size: 11px;
+                     font-weight: 600; border-radius: 999px; padding: 2px 8px;
+                     margin-left: 6px; vertical-align: middle; }}
+  .badge-hybrid   {{ background: #ede9fe; color: #5b21b6; font-size: 11px;
+                     font-weight: 600; border-radius: 999px; padding: 2px 8px;
+                     margin-left: 6px; vertical-align: middle; }}
+  .badge-onsite   {{ background: #fee2e2; color: #991b1b; font-size: 11px;
+                     font-weight: 600; border-radius: 999px; padding: 2px 8px;
+                     margin-left: 6px; vertical-align: middle; }}
+  .salary-line {{ font-size: 13px; color: #15803d; font-weight: 600; margin-left: 6px; }}
   .footer {{ background: #f9f9f9; border-top: 1px solid #eee;
              padding: 14px 28px; font-size: 12px; color: #888; }}
   .stats {{ display: flex; gap: 20px; margin-bottom: 16px; }}
@@ -97,9 +107,9 @@ _HTML_TEMPLATE = """\
 _JOB_CARD = """\
 <div class="job-card job-card-{label}">
   <p class="job-title">{company} &mdash; {title}
-    <span class="score-badge badge-{label}">Score {score}</span>
+    <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}
   </p>
-  <p class="job-meta">{location}{posted_line}</p>
+  <p class="job-meta">{location}{posted_line}{salary_line}</p>
   <a class="job-link" href="{url}" target="_blank">View Job &rarr;</a>
 </div>"""
 
@@ -116,6 +126,21 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
 
     def _card(job: Job) -> str:
         posted_line = f" &middot; {job.posted}" if job.posted else ""
+        # Work-type badge
+        wt = (job.work_type or "").strip()
+        if wt == "Remote":
+            work_type_badge = '<span class="badge-remote">&#127968; Remote</span>'
+        elif wt == "Hybrid":
+            work_type_badge = '<span class="badge-hybrid">&#9681; Hybrid</span>'
+        elif wt == "Onsite":
+            work_type_badge = '<span class="badge-onsite">&#127970; Onsite</span>'
+        else:
+            work_type_badge = ""
+        # Salary line
+        salary_line = (
+            f' &middot; <span class="salary-line">&#128176; {job.salary}</span>'
+            if job.salary else ""
+        )
         return _JOB_CARD.format(
             label=job.label,
             company=job.company,
@@ -123,6 +148,8 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             score=job.score,
             location=job.location,
             posted_line=posted_line,
+            salary_line=salary_line,
+            work_type_badge=work_type_badge,
             url=job.url,
         )
 
@@ -160,20 +187,24 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
 
 def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job], source_errors: list[str] | None = None) -> str:
     lines: list[str] = []
+    def _txt_job(j: Job) -> list[str]:
+        posted = f" | {j.posted}" if j.posted else ""
+        wt = f" | {j.work_type}" if j.work_type else ""
+        sal = f" | {j.salary}" if j.salary else ""
+        return [
+            f"[{j.company}] {j.title} | {j.location}{wt}{posted}{sal}",
+            f"  Score: {j.score}  {j.url}",
+            "",
+        ]
+
     if yes_jobs:
         lines.append(f"=== STRONG MATCHES ({len(yes_jobs)}) ===\n")
         for j in yes_jobs:
-            posted = f" | {j.posted}" if j.posted else ""
-            lines.append(f"[{j.company}] {j.title} | {j.location}{posted}")
-            lines.append(f"  Score: {j.score}  {j.url}")
-            lines.append("")
+            lines.extend(_txt_job(j))
     if maybe_jobs:
         lines.append(f"\n=== REVIEW NEEDED ({len(maybe_jobs)}) ===\n")
         for j in maybe_jobs:
-            posted = f" | {j.posted}" if j.posted else ""
-            lines.append(f"[{j.company}] {j.title} | {j.location}{posted}")
-            lines.append(f"  Score: {j.score}  {j.url}")
-            lines.append("")
+            lines.extend(_txt_job(j))
     if source_errors:
         lines.append(f"\n⚠ {len(source_errors)} source(s) failed: {', '.join(source_errors[:5])}")
     return "\n".join(lines)
@@ -197,12 +228,16 @@ class EmailNotifier(BaseNotifier):
     def __init__(self, user: str, password: str, to: str, smtp_host: str = "smtp.gmail.com", smtp_port: int = 587) -> None:
         self.user = user
         self.password = (password or "").replace(" ", "")
-        self.to = to
+        # Support multiple recipients: comma-separated string or list
+        if isinstance(to, list):
+            self.recipients = [r.strip() for r in to if r.strip()]
+        else:
+            self.recipients = [r.strip() for r in (to or "").split(",") if r.strip()]
         self.smtp_host = smtp_host
         self.smtp_port = smtp_port
 
     def is_configured(self) -> bool:
-        return bool(self.user and self.password and self.to)
+        return bool(self.user and self.password and self.recipients)
 
     def notify(self, yes_jobs: list[Job], maybe_jobs: list[Job], *, subject_prefix: str = "[Job Radar]", mode: str = "main", source_errors: list[str] | None = None) -> None:
         if not self.is_configured():
@@ -220,7 +255,7 @@ class EmailNotifier(BaseNotifier):
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"] = self.user
-        msg["To"] = self.to
+        msg["To"] = ", ".join(self.recipients)   # shows all recipients in email header
         msg.attach(MIMEText(text_body, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
 
@@ -232,20 +267,18 @@ class EmailNotifier(BaseNotifier):
             ctx = ssl.create_default_context()
 
         if self.smtp_port == 465:
-            # Direct SSL connection
             with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, context=ctx) as server:
                 server.login(self.user, self.password)
-                server.send_message(msg)
+                server.sendmail(self.user, self.recipients, msg.as_string())
         else:
-            # Port 587 — plain connection then upgrade with STARTTLS
             with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
                 server.ehlo()
                 server.starttls(context=ctx)
                 server.ehlo()
                 server.login(self.user, self.password)
-                server.send_message(msg)
+                server.sendmail(self.user, self.recipients, msg.as_string())
 
-        log.info("Email sent: %d yes + %d maybe to %s", len(yes_jobs), len(maybe_jobs), self.to)
+        log.info("Email sent: %d yes + %d maybe to %s", len(yes_jobs), len(maybe_jobs), ", ".join(self.recipients))
 
 
 # ---------------------------------------------------------------------------

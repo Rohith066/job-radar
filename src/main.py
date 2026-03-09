@@ -31,6 +31,7 @@ from .config import Config
 from .database import Database
 from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNotifier
 from .sources.base import Job, is_us_location
+from .utils.salary import detect_work_type
 from .sources.eightfold import EightfoldSource
 from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
@@ -505,10 +506,12 @@ def _dispatch_results(
     if dupes:
         log.info("Dedup: removed %d duplicate(s)", dupes)
 
-    # Apply resume skill-match bonus
+    # Apply resume skill-match bonus + detect work type
     for j in matched:
         bonus = skill_bonus(j.title)
         j.score = min(100, j.score + bonus)
+        if not j.work_type:
+            j.work_type = detect_work_type(title=j.title, location=j.location)
 
     yes_jobs = sorted([j for j in matched if j.label == "yes"], key=lambda j: j.score, reverse=True)
     maybe_jobs = sorted([j for j in matched if j.label == "maybe"], key=lambda j: j.score, reverse=True)
@@ -572,6 +575,7 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
     stats = db.get_stats()
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    fb = db.get_feedback_stats()
     subject = f"[Job Radar] Weekly Health Check — {ts}"
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -588,6 +592,8 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
   .stat {{ display:flex; justify-content:space-between; padding:10px 0;
            border-bottom:1px solid #f0f0f0; font-size:14px; }}
   .stat-val {{ font-weight:700; color:#1d4ed8; }}
+  .section-head {{ font-size:13px; font-weight:700; text-transform:uppercase;
+                   letter-spacing:.05em; color:#555; margin-top:18px; margin-bottom:4px; }}
   .ok {{ color:#16a34a; font-weight:700; }}
   .footer {{ background:#f9f9f9; border-top:1px solid #eee;
              padding:14px 28px; font-size:12px; color:#888; }}
@@ -598,7 +604,8 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
     <p>{ts}</p>
   </div>
   <div class="body">
-    <p class="ok">Job Radar is running and monitoring 916+ companies for you.</p>
+    <p class="ok">Job Radar is running and monitoring 920+ companies for you.</p>
+    <p class="section-head">📈 Activity</p>
     <div class="stat"><span>Jobs found (last 24 hrs)</span><span class="stat-val">{stats['new_24h']}</span></div>
     <div class="stat"><span>Jobs found (last 7 days)</span><span class="stat-val">{stats['new_7d']}</span></div>
     <div class="stat"><span>Total YES matches in DB</span><span class="stat-val">{stats['yes_count']}</span></div>
@@ -606,20 +613,35 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
     <div class="stat"><span>Total jobs tracked</span><span class="stat-val">{stats['total_jobs']}</span></div>
     <div class="stat"><span>Last job activity</span><span class="stat-val">{stats['last_activity'][:19]}</span></div>
     <div class="stat"><span>ATS boards tracked</span><span class="stat-val">{stats['boards']['total']} ({stats['boards']['active']} active)</span></div>
+    <p class="section-head">🤖 Your Feedback (ML Training Data)</p>
+    <div class="stat"><span>✅ Applied</span><span class="stat-val">{fb['applied']}</span></div>
+    <div class="stat"><span>🔖 Interested</span><span class="stat-val">{fb['interested']}</span></div>
+    <div class="stat"><span>❌ Dismissed</span><span class="stat-val">{fb['dismissed']}</span></div>
+    <div class="stat"><span>Total feedback entries</span><span class="stat-val">{fb['total']}</span></div>
+    <p style="font-size:12px;color:#888;margin-top:12px;">
+      💡 <b>Tip:</b> Use <code>python -m src.main --applied &lt;url&gt;</code> to record feedback after applying.
+      The system will use your feedback to improve job ranking over time.
+    </p>
   </div>
   <div class="footer">Powered by Job Radar — targeting Data Analyst · Data Scientist · Data Engineer</div>
 </div></body></html>"""
 
     text = (
         f"Job Radar Weekly Health Check — {ts}\n\n"
-        f"✅ Job Radar is running and monitoring 916+ companies.\n\n"
+        f"✅ Job Radar is running and monitoring 920+ companies.\n\n"
+        f"=== Activity ===\n"
         f"Jobs found last 24h : {stats['new_24h']}\n"
         f"Jobs found last 7d  : {stats['new_7d']}\n"
         f"Total YES in DB     : {stats['yes_count']}\n"
         f"Total MAYBE in DB   : {stats['maybe_count']}\n"
         f"Total jobs tracked  : {stats['total_jobs']}\n"
         f"Last activity       : {stats['last_activity'][:19]}\n"
-        f"ATS boards tracked  : {stats['boards']['total']} ({stats['boards']['active']} active)\n"
+        f"ATS boards tracked  : {stats['boards']['total']} ({stats['boards']['active']} active)\n\n"
+        f"=== Feedback (ML Training Data) ===\n"
+        f"Applied    : {fb['applied']}\n"
+        f"Interested : {fb['interested']}\n"
+        f"Dismissed  : {fb['dismissed']}\n"
+        f"Total      : {fb['total']}\n"
     )
 
     from email.mime.multipart import MIMEMultipart
@@ -633,7 +655,7 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = n.user
-            msg["To"] = n.to
+            msg["To"] = ", ".join(n.recipients)
             msg.attach(MIMEText(text, "plain", "utf-8"))
             msg.attach(MIMEText(html, "html", "utf-8"))
             try:
@@ -643,14 +665,79 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
                 ctx = _ssl.create_default_context()
             if n.smtp_port == 465:
                 with smtplib.SMTP_SSL(n.smtp_host, n.smtp_port, context=ctx) as s:
-                    s.login(n.user, n.password); s.send_message(msg)
+                    s.login(n.user, n.password)
+                    s.sendmail(n.user, n.recipients, msg.as_string())
             else:
                 with smtplib.SMTP(n.smtp_host, n.smtp_port) as s:
                     s.ehlo(); s.starttls(context=ctx); s.ehlo()
-                    s.login(n.user, n.password); s.send_message(msg)
-            log.info("Health check email sent to %s", n.to)
+                    s.login(n.user, n.password)
+                    s.sendmail(n.user, n.recipients, msg.as_string())
+            log.info("Health check email sent to %s", ", ".join(n.recipients))
             return
     log.warning("No email notifier configured — health check skipped.")
+
+
+def run_record_feedback(db: Database, identifier: str, action: str) -> None:
+    """Record user feedback for a job identified by URL or key."""
+    # Identifier can be a full URL or a job key.  We look up by URL first.
+    rows = db._conn.execute(
+        "SELECT key, company, title, url FROM jobs WHERE url=? OR key=?",
+        (identifier.strip(), identifier.strip()),
+    ).fetchall()
+
+    if not rows:
+        # Try partial URL match (user might have trimmed query params)
+        ident_clean = identifier.strip().split("?")[0].rstrip("/")
+        rows = db._conn.execute(
+            "SELECT key, company, title, url FROM jobs WHERE url LIKE ?",
+            (f"%{ident_clean}%",),
+        ).fetchall()
+
+    if not rows:
+        log.error(
+            "Job not found in DB for identifier: %s\n"
+            "Tip: copy the exact URL from the email 'View Job →' link.",
+            identifier,
+        )
+        sys.exit(1)
+
+    if len(rows) > 1:
+        log.warning("Multiple jobs matched — using the first one.")
+
+    job_key = rows[0]["key"]
+    company = rows[0]["company"] or "?"
+    title   = rows[0]["title"] or "?"
+
+    db.record_feedback(job_key, action)
+    emoji = {"applied": "✅", "dismissed": "❌", "interested": "🔖"}.get(action, "📝")
+    log.info("%s Recorded '%s' for: [%s] %s", emoji, action, company, title)
+
+
+def run_feedback_summary(db: Database) -> None:
+    """Print all feedback entries to the terminal."""
+    stats = db.get_feedback_stats()
+    print(f"\n{'='*60}")
+    print(f"  Job Radar — Feedback Summary")
+    print(f"{'='*60}")
+    print(f"  ✅  Applied    : {stats['applied']}")
+    print(f"  🔖  Interested : {stats['interested']}")
+    print(f"  ❌  Dismissed  : {stats['dismissed']}")
+    print(f"  📊  Total      : {stats['total']}")
+    print(f"{'='*60}\n")
+
+    for action_label, action_key in [("✅ APPLIED", "applied"), ("🔖 INTERESTED", "interested"), ("❌ DISMISSED", "dismissed")]:
+        jobs = db.get_feedback_jobs(action_key)
+        if not jobs:
+            continue
+        print(f"{action_label} ({len(jobs)})")
+        print("-" * 60)
+        for j in jobs:
+            company = j.get("company") or "?"
+            title   = j.get("title") or "?"
+            score   = j.get("score") or 0
+            ts      = (j.get("created_at") or "")[:10]
+            print(f"  [{ts}] {company} — {title}  (score {score})")
+        print()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -665,6 +752,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--test-notify", action="store_true", help="Send a sample notification without updating state.")
     p.add_argument("--health-check", action="store_true", help="Send a weekly health-check summary email and exit.")
     p.add_argument("--verbose", "-v", action="store_true", help="Enable DEBUG logging.")
+
+    # Feedback (ML training signal)
+    fg = p.add_argument_group("Feedback (ML training)")
+    fg.add_argument("--applied", metavar="JOB_URL_OR_KEY", help="Mark a job as applied (copy URL from the email link).")
+    fg.add_argument("--dismiss", metavar="JOB_URL_OR_KEY", help="Mark a job as not interesting.")
+    fg.add_argument("--interested", metavar="JOB_URL_OR_KEY", help="Mark a job as interesting (bookmarked for later).")
+    fg.add_argument("--feedback", action="store_true", help="Print a summary of all recorded feedback and exit.")
 
     # Boards options
     bg = p.add_argument_group("Boards mode options")
@@ -694,6 +788,22 @@ def main(argv: Optional[list[str]] = None) -> None:
     try:
         if args.health_check:
             run_health_check(cfg=cfg, db=db, notifier=notifier)
+            return
+
+        if args.feedback:
+            run_feedback_summary(db=db)
+            return
+
+        if args.applied:
+            run_record_feedback(db=db, identifier=args.applied, action="applied")
+            return
+
+        if args.dismiss:
+            run_record_feedback(db=db, identifier=args.dismiss, action="dismissed")
+            return
+
+        if args.interested:
+            run_record_feedback(db=db, identifier=args.interested, action="interested")
             return
 
         if args.mode == "main":

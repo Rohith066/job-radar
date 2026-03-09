@@ -58,10 +58,21 @@ CREATE TABLE IF NOT EXISTS cursors (
     value  TEXT NOT NULL DEFAULT '0'
 );
 
+-- Feedback table: stores user actions on individual jobs (applied / dismissed)
+-- Used by the ML scoring layer to learn user preferences over time.
+CREATE TABLE IF NOT EXISTS feedback (
+    job_key    TEXT NOT NULL,
+    action     TEXT NOT NULL,          -- 'applied' | 'dismissed' | 'interested'
+    created_at TEXT NOT NULL,
+    notes      TEXT NOT NULL DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
 CREATE INDEX IF NOT EXISTS idx_jobs_label  ON jobs(label);
 CREATE INDEX IF NOT EXISTS idx_boards_platform ON boards(platform);
 CREATE INDEX IF NOT EXISTS idx_boards_status   ON boards(status);
+CREATE INDEX IF NOT EXISTS idx_feedback_key ON feedback(job_key);
+CREATE INDEX IF NOT EXISTS idx_feedback_action ON feedback(action);
 """
 
 
@@ -281,6 +292,56 @@ class Database:
             "last_activity": last_activity,
             "boards": board_stats,
         }
+
+    # -------------------------------------------------------------------------
+    # Feedback (ML training signal)
+    # -------------------------------------------------------------------------
+
+    def record_feedback(self, job_key: str, action: str, notes: str = "") -> bool:
+        """Store user feedback for a job. action: 'applied' | 'dismissed' | 'interested'.
+        Returns True if the job_key exists in the jobs table, False otherwise.
+        """
+        valid_actions = {"applied", "dismissed", "interested"}
+        if action not in valid_actions:
+            raise ValueError(f"action must be one of {valid_actions}, got {action!r}")
+        # Verify job exists (warn but still record so feedback isn't lost)
+        exists = self._conn.execute("SELECT 1 FROM jobs WHERE key=?", (job_key,)).fetchone() is not None
+        with self._tx() as conn:
+            conn.execute(
+                "INSERT INTO feedback(job_key, action, created_at, notes) VALUES(?,?,?,?)",
+                (job_key, action, _now(), notes),
+            )
+        return exists
+
+    def get_feedback_stats(self) -> dict:
+        """Return counts of each feedback action."""
+        rows = self._conn.execute(
+            "SELECT action, COUNT(*) as cnt FROM feedback GROUP BY action"
+        ).fetchall()
+        stats = {"applied": 0, "dismissed": 0, "interested": 0, "total": 0}
+        for r in rows:
+            stats[r["action"]] = r["cnt"]
+        stats["total"] = sum(v for k, v in stats.items() if k != "total")
+        return stats
+
+    def get_feedback_jobs(self, action: str | None = None) -> list[dict]:
+        """Return all feedback entries, optionally filtered by action."""
+        if action:
+            rows = self._conn.execute(
+                """SELECT f.job_key, f.action, f.created_at, f.notes,
+                          j.company, j.title, j.url, j.score, j.label
+                   FROM feedback f LEFT JOIN jobs j ON j.key = f.job_key
+                   WHERE f.action = ? ORDER BY f.created_at DESC""",
+                (action,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT f.job_key, f.action, f.created_at, f.notes,
+                          j.company, j.title, j.url, j.score, j.label
+                   FROM feedback f LEFT JOIN jobs j ON j.key = f.job_key
+                   ORDER BY f.created_at DESC"""
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def export_dead_boards_csv(self, out_path: str) -> None:
         import csv

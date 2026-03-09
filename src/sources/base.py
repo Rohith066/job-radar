@@ -24,6 +24,8 @@ class Job:
     posted: str = ""
     score: int = 0
     label: str = "no"
+    salary: str = ""        # e.g. "$80,000 – $120,000/yr" — empty when not available
+    work_type: str = ""     # "Remote" | "Hybrid" | "Onsite" | "" when unknown
 
 
 def make_location(parts: list[Optional[str]]) -> str:
