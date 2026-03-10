@@ -32,6 +32,7 @@ from .database import Database
 from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNotifier
 from .sources.base import Job, is_us_location
 from .utils.salary import detect_work_type
+from .ml.scorer import ml_rescore, get_model_info
 from .sources.eightfold import EightfoldSource
 from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
@@ -513,6 +514,10 @@ def _dispatch_results(
         if not j.work_type:
             j.work_type = detect_work_type(title=j.title, location=j.location)
 
+    # ML re-scoring: adjusts scores based on your applied/dismissed feedback
+    # Skipped automatically if fewer than 10 feedback entries exist (cold start)
+    matched = ml_rescore(matched, db=db)
+
     yes_jobs = sorted([j for j in matched if j.label == "yes"], key=lambda j: j.score, reverse=True)
     maybe_jobs = sorted([j for j in matched if j.label == "maybe"], key=lambda j: j.score, reverse=True)
 
@@ -576,6 +581,7 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     fb = db.get_feedback_stats()
+    ml = get_model_info()
     subject = f"[Job Radar] Weekly Health Check — {ts}"
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -618,9 +624,13 @@ def run_health_check(cfg: Config, db: Database, notifier: CompositeNotifier) -> 
     <div class="stat"><span>🔖 Interested</span><span class="stat-val">{fb['interested']}</span></div>
     <div class="stat"><span>❌ Dismissed</span><span class="stat-val">{fb['dismissed']}</span></div>
     <div class="stat"><span>Total feedback entries</span><span class="stat-val">{fb['total']}</span></div>
+    <p class="section-head">🧠 ML Model Status</p>
+    <div class="stat"><span>Model trained</span><span class="stat-val">{"✅ Yes" if ml["trained"] else "⏳ Not yet (need 10+ feedback)"}</span></div>
+    <div class="stat"><span>Features learned</span><span class="stat-val">{ml["features"]}</span></div>
     <p style="font-size:12px;color:#888;margin-top:12px;">
-      💡 <b>Tip:</b> Use <code>python -m src.main --applied &lt;url&gt;</code> to record feedback after applying.
-      The system will use your feedback to improve job ranking over time.
+      💡 <b>Tip:</b> Use <code>python -m src.main --applied &lt;url&gt;</code> after applying to a job.
+      Once you have 10+ feedback entries the ML model trains automatically and starts boosting
+      jobs similar to ones you liked — and penalising ones you dismissed.
     </p>
   </div>
   <div class="footer">Powered by Job Radar — targeting Data Analyst · Data Scientist · Data Engineer</div>
