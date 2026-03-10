@@ -33,6 +33,7 @@ from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNo
 from .sources.base import Job, is_us_location
 from .utils.salary import detect_work_type
 from .ml.scorer import ml_rescore, get_model_info
+from .dashboard import run_dashboard
 from .sources.eightfold import EightfoldSource
 from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
@@ -563,6 +564,8 @@ def _dispatch_results(
                 key=j.key, source=j.source, company=j.company, title=j.title,
                 location=j.location, url=j.url, posted=j.posted,
                 score=j.score, label=j.label,
+                work_type=getattr(j, "work_type", ""),
+                salary=getattr(j, "salary", ""),
             )
         log.debug("Saved %d jobs to database.", len(matched))
 
@@ -769,6 +772,7 @@ def build_parser() -> argparse.ArgumentParser:
     fg.add_argument("--dismiss", metavar="JOB_URL_OR_KEY", help="Mark a job as not interesting.")
     fg.add_argument("--interested", metavar="JOB_URL_OR_KEY", help="Mark a job as interesting (bookmarked for later).")
     fg.add_argument("--feedback", action="store_true", help="Print a summary of all recorded feedback and exit.")
+    fg.add_argument("--dashboard", action="store_true", help="Open the local feedback dashboard in your browser (http://localhost:5100).")
 
     # Boards options
     bg = p.add_argument_group("Boards mode options")
@@ -798,6 +802,10 @@ def main(argv: Optional[list[str]] = None) -> None:
     try:
         if args.health_check:
             run_health_check(cfg=cfg, db=db, notifier=notifier)
+            return
+
+        if args.dashboard:
+            run_dashboard(db=db)
             return
 
         if args.feedback:

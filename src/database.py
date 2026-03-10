@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     posted       TEXT NOT NULL DEFAULT '',
     score        INTEGER NOT NULL DEFAULT 0,
     label        TEXT NOT NULL DEFAULT 'no',
+    work_type    TEXT NOT NULL DEFAULT '',
+    salary       TEXT NOT NULL DEFAULT '',
     first_seen   TEXT NOT NULL,
     last_seen    TEXT NOT NULL
 );
@@ -83,8 +85,23 @@ class Database:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(CREATE_SQL)
+        self._migrate()
         self._conn.commit()
         log.debug("Database opened: %s", path)
+
+    def _migrate(self) -> None:
+        """Add new columns to existing databases (safe — uses ALTER TABLE IF NOT EXISTS pattern)."""
+        existing = {
+            row[1] for row in self._conn.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        additions = {
+            "work_type": "TEXT NOT NULL DEFAULT ''",
+            "salary":    "TEXT NOT NULL DEFAULT ''",
+        }
+        for col, definition in additions.items():
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {definition}")
+                log.debug("DB migration: added column jobs.%s", col)
 
     def close(self) -> None:
         self._conn.close()
@@ -119,13 +136,15 @@ class Database:
         posted: str,
         score: int,
         label: str,
+        work_type: str = "",
+        salary: str = "",
     ) -> None:
         now = _now()
         with self._tx() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs(key,source,company,title,location,url,posted,score,label,first_seen,last_seen)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO jobs(key,source,company,title,location,url,posted,score,label,work_type,salary,first_seen,last_seen)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(key) DO UPDATE SET
                     title=excluded.title,
                     location=excluded.location,
@@ -133,9 +152,11 @@ class Database:
                     posted=excluded.posted,
                     score=excluded.score,
                     label=excluded.label,
+                    work_type=excluded.work_type,
+                    salary=excluded.salary,
                     last_seen=excluded.last_seen
                 """,
-                (key, source, company, title, location, url, posted, score, label, now, now),
+                (key, source, company, title, location, url, posted, score, label, work_type, salary, now, now),
             )
 
     def source_is_bootstrapped(self, source: str) -> bool:
