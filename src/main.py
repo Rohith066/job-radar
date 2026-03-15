@@ -16,6 +16,7 @@ import argparse
 import csv
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -173,33 +174,88 @@ def build_notifier(cfg: Config) -> CompositeNotifier:
 # Job age filter — drop stale listings older than MAX_JOB_AGE_DAYS
 # ---------------------------------------------------------------------------
 
-MAX_JOB_AGE_DAYS = 30
+MAX_JOB_AGE_DAYS = 7   # only alert on jobs posted within the last 7 days
 
 _DATE_FORMATS = [
     "%Y-%m-%dT%H:%M:%S%z",
     "%Y-%m-%dT%H:%M:%SZ",
     "%Y-%m-%dT%H:%M:%S.%f%z",
     "%Y-%m-%d",
+    "%B %d, %Y",       # "March 14, 2026"
+    "%b %d, %Y",       # "Mar 14, 2026"
+    "%d %B %Y",        # "14 March 2026"
+    "%d %b %Y",        # "14 Mar 2026"
 ]
+
+# Relative date patterns: "2 days ago", "3 hours ago", "1 week ago", "just now", etc.
+_RELATIVE_RE = re.compile(
+    r"""
+    (?:
+        (?P<num>\d+)\s*
+        (?P<unit>second|minute|hour|day|week|month)s?\s+ago
+      | (?P<today>today|just\s+now|moments?\s+ago)
+      | (?P<yesterday>yesterday)
+      | (?P<daysago>\d+)[dD]\s*(?:ago)?       # "3d ago" or "3d"
+      | (?P<hoursago>\d+)[hH]\s*(?:ago)?      # "5h ago" or "5h"
+    )
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
 
 
 def _parse_posted(posted: str) -> Optional[datetime]:
+    if not posted:
+        return None
+    now = datetime.now(timezone.utc)
+    s = str(posted).strip()
+
+    # Try absolute date formats first
     for fmt in _DATE_FORMATS:
         try:
-            dt = datetime.strptime(posted[:26], fmt)
+            dt = datetime.strptime(s[:26], fmt)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt
         except (ValueError, TypeError):
             continue
+
+    # Try relative date strings
+    m = _RELATIVE_RE.search(s)
+    if m:
+        if m.group("today"):
+            return now
+        if m.group("yesterday"):
+            return now - timedelta(days=1)
+        if m.group("daysago"):
+            return now - timedelta(days=int(m.group("daysago")))
+        if m.group("hoursago"):
+            return now - timedelta(hours=int(m.group("hoursago")))
+        num  = int(m.group("num"))
+        unit = m.group("unit").lower()
+        delta = {
+            "second": timedelta(seconds=num),
+            "minute": timedelta(minutes=num),
+            "hour":   timedelta(hours=num),
+            "day":    timedelta(days=num),
+            "week":   timedelta(weeks=num),
+            "month":  timedelta(days=num * 30),
+        }.get(unit)
+        if delta:
+            return now - delta
+
     return None
 
 
 def _is_too_old(posted: str, max_days: int = MAX_JOB_AGE_DAYS) -> bool:
-    """Return True if job was posted more than max_days ago. Unknown dates pass through."""
+    """Return True if job was posted more than max_days ago.
+
+    If the date cannot be parsed at all, the job is filtered OUT (strict mode)
+    to prevent old jobs with unparseable dates from slipping through forever.
+    """
     dt = _parse_posted(posted)
     if dt is None:
-        return False  # can't parse → don't filter out
+        # No posted date at all → treat as brand new (source doesn't provide dates)
+        return False
     return dt < datetime.now(timezone.utc) - timedelta(days=max_days)
 
 
