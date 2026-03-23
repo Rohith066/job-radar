@@ -20,18 +20,16 @@ PROFILE = {
     "education": "M.S. Data Analytics Engineering — George Mason University (2025)",
     "target_roles": [
         "Data Analyst",
-        "Data Scientist",
-        "Data Engineer",
         "Analytics Engineer",
         "Business Intelligence Analyst",
         "Business Intelligence Engineer",
-        "Machine Learning Engineer",
-        "Applied Scientist",
-        "ML/AI Data Engineer",
+        "Commercial Analyst",
+        "Revenue Analyst",
+        "Financial Analyst",
+        "Reporting Analyst",
+        "Product Analyst",
+        "Data Engineer",
         "Data Warehouse Engineer",
-        "PRODUCT ANALYST",
-        "LLM PROMPT ENGINEER",
-        "LLM ENGINEER",
     ],
 }
 
@@ -58,20 +56,25 @@ SKILLS_STRONG: set[str] = {
     "logistic regression", "regression",
     "k-means", "clustering",
     "classification",
-    "machine learning", "ml",
     "data warehouse", "dwh",
     "data modeling",
+    # Moved from moderate — have project evidence for both
+    "dbt",
+    "airflow",
+    # Commercial analytics signals — core to target roles
+    "data lineage",
+    "data governance",
+    "kpi",
+    "a/b test",
+    "experimentation",
+    "financial analytics",
 }
 
 # Familiar / secondary exposure
 SKILLS_MODERATE: set[str] = {
     "kafka",
-    "airflow",
-    "dbt",
     "hadoop",
     "flink",
-    "tensorflow",
-    "pytorch",
     "bigquery",
     "looker",
     "qlik",
@@ -82,6 +85,10 @@ SKILLS_MODERATE: set[str] = {
     "mysql",
     "postgresql",
     "postgres",
+    "metabase",
+    "mixpanel",
+    "segment",
+    "amplitude",
 }
 
 # ---------------------------------------------------------------------------

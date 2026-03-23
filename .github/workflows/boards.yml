@@ -2,7 +2,12 @@ name: Job Radar — Board Sweep
 
 on:
   schedule:
-    - cron: "30 */3 * * *"   # Every 3 hours (offset 30 min so it doesn't clash with main)
+    # Weekdays: 8 AM, 1 PM, 6 PM EST (offset 30 min from main to avoid clashes)
+    - cron: "30 12 * * 1-5"  # 8:30 AM EST weekdays
+    - cron: "30 17 * * 1-5"  # 1:30 PM EST weekdays
+    - cron: "30 22 * * 1-5"  # 6:30 PM EST weekdays
+    # Weekend: once daily
+    - cron: "30 14 * * 6,0"  # 10:30 AM EST Saturday & Sunday
   workflow_dispatch:
     inputs:
       batch_size:

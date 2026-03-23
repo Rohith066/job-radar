@@ -86,6 +86,46 @@ def _raw_to_num(raw: str) -> float:
     return val * 1_000 if is_k else val
 
 
+SALARY_FLOOR_USD = 90_000   # Never alert on explicitly sub-floor annual salaries
+
+
+def salary_passes_filter(salary_text: str) -> bool:
+    """Return True if the salary is above the floor or unknown.
+
+    Only returns False when a salary is *explicitly stated* and is below
+    SALARY_FLOOR_USD. Unknown / missing salary always passes through.
+    """
+    if not salary_text:
+        return True
+
+    # Extract all numeric amounts from the string
+    numbers = re.findall(r"\$?([\d,]+\.?\d*)\s*[kK]?", salary_text)
+    if not numbers:
+        return True
+
+    parsed: list[float] = []
+    for n in numbers:
+        clean = n.replace(",", "")
+        try:
+            val = float(clean)
+            # Handle K notation (e.g. "85k" embedded in text)
+            if "k" in salary_text.lower() and val < 1_000:
+                val *= 1_000
+            parsed.append(val)
+        except ValueError:
+            continue
+
+    if not parsed:
+        return True
+
+    # If hourly (max value < 500), convert to annual for comparison
+    max_val = max(parsed)
+    if max_val < 500:
+        max_val *= 2_080   # 40 hrs × 52 weeks
+
+    return max_val >= SALARY_FLOOR_USD
+
+
 def extract_salary(text: str) -> str:
     """Return a human-readable salary string, or empty string if not found."""
     if not text:

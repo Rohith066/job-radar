@@ -1,15 +1,15 @@
-"""Data-domain job title classifier — tuned for Data Analyst / Data Scientist / Data Engineer roles.
+"""Data-domain job title classifier — tuned for commercial analytics roles.
 
-Scoring:
-  yes   (score 70–100) — strong data role match
-  maybe (score 40–69)  — data role with seniority or ambiguity; review manually
-  no    (score  0–39)  — not a data role (software-only, ops, sales, QA, etc.)
+Scoring tiers:
+  Tier 1 (score 92) — core sweet spot: Data Analyst, BI Analyst, Analytics Engineer
+  Tier 2 (score 78) — strong fit: Data Engineer, Product Analyst, ETL/Warehouse roles
+  Tier 3 (score 55) — review manually: Data Scientist, Quant Analyst, Business Analyst
+  Tier 4 (score  0) — profile mismatch: ML Engineer, LLM Engineer, Applied Scientist, etc.
 
-Design rationale
------------------
-Only data-domain roles pass. Pure software engineering, DevOps, QA, security,
-PM, sales, and non-data-facing roles all return "no" so the user only sees
-Data Analyst, Data Scientist, Data Engineer, ML Engineer, BI Analyst, etc.
+Labels:
+  yes   (score 70–100) — alert immediately
+  maybe (score 40–69)  — alert but review
+  no    (score  0–39)  — suppressed
 """
 from __future__ import annotations
 
@@ -17,75 +17,96 @@ import re
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
-# Data-domain STRONG includes  →  base score 90
+# Tier 1 — Core sweet spot  →  score 92
 # ---------------------------------------------------------------------------
-DATA_STRONG = [
-    # Core data roles
+TIER_1_ROLES = [
     "data analyst",
     "data analytics",
-    "data scientist",
-    "data science",
-    "data engineer",
-    "data engineering",
     "analytics engineer",
     "analytics analyst",
-    # Business Intelligence
-    "business intelligence",
+    "business intelligence analyst",
     "bi analyst",
+    "business intelligence engineer",
     "bi engineer",
     "bi developer",
-    "bi developer",
     "intelligence analyst",
-    # Machine Learning / AI (data side)
-    "machine learning engineer",
-    "ml engineer",
-    "applied scientist",
-    "research scientist",
+    "commercial analyst",
+    "revenue analyst",
+    "financial analyst",
+    "reporting analyst",
+    "insights analyst",
+    "decision science analyst",
+    "data governance",
+    "data quality analyst",
+    "data quality engineer",
+    "data management analyst",
+    "data operations analyst",
+    "data steward",
+    "data catalog",
+]
+
+# ---------------------------------------------------------------------------
+# Tier 2 — Strong fit, slightly off-centre  →  score 78
+# ---------------------------------------------------------------------------
+TIER_2_ROLES = [
+    "data engineer",
+    "data engineering",
+    "product analyst",
+    "growth analyst",
+    "marketing analyst",
+    "operations analyst",
+    "data warehouse engineer",
+    "data warehousing",
+    "dwh engineer",
+    "etl engineer",
+    "etl developer",
+    "elt engineer",
+    "data modeler",
+    "data modeling",
+    "data platform engineer",
+    "data infrastructure engineer",
+    "data reliability engineer",
+    "data architect",
+    "analytics architect",
+    "data platform",
+    "data infrastructure",
+    "analytics consultant",
+    "data consultant",
+    "data advisor",
+    "insights engineer",
+    "clinical data analyst",
+]
+
+# ---------------------------------------------------------------------------
+# Tier 3 — Visible but review manually  →  score 55
+# ---------------------------------------------------------------------------
+TIER_3_ROLES = [
+    "data scientist",
+    "data science",
     "decision scientist",
-    "ai data",
-    # Quantitative / Statistical
     "quantitative analyst",
     "quant analyst",
     "statistical analyst",
     "statistical modeler",
     "forecasting analyst",
-    # Platform / Infrastructure / Quality (data)
-    "data platform engineer",
-    "data infrastructure engineer",
-    "data reliability engineer",
-    "data quality engineer",
-    "data quality analyst",
-    "data governance",
-    "data management analyst",
-    "data operations analyst",
-    "data architect",
-    "analytics architect",
-    # ETL / Warehouse
-    "etl engineer",
-    "etl developer",
-    "elt engineer",
-    "data warehouse engineer",
-    "data warehousing",
-    "dwh engineer",
-    "data modeler",
-    "data modeling",
-    # Insights / Reporting
-    "insights analyst",
-    "insights engineer",
-    "reporting analyst",
-    "product analyst",
-    "growth analyst",
-    "marketing analyst",
-    "financial analyst",
-    "operations analyst",
-    "clinical data analyst",
     "research analyst",
-    # AI/ML Data Engineering
-    "feature engineer",
+    "business analyst",
+    "operations research",
+    "ai analyst",
+    "ai scientist",
+]
+
+# ---------------------------------------------------------------------------
+# Tier 4 — NOT your profile  →  score 0, never alert
+# ---------------------------------------------------------------------------
+PROFILE_MISMATCH = [
+    "machine learning engineer",
+    "ml engineer",
     "mlops engineer",
     "ml platform engineer",
+    "applied scientist",
+    "research scientist",
     "ai engineer",
-    # LLM / Generative AI (modern AI roles)
     "llm engineer",
     "llm data",
     "prompt engineer",
@@ -98,14 +119,12 @@ DATA_STRONG = [
     "computer vision scientist",
     "multimodal",
     "foundation model",
-    # Consulting / advisory (data-focused)
-    "analytics consultant",
-    "data consultant",
-    "data advisor",
+    "feature engineer",
+    "ai data",
 ]
 
 # ---------------------------------------------------------------------------
-# Data-domain WEAK includes  →  base score 55 (needs review)
+# Weak data signals — score 40 (borderline maybe)
 # ---------------------------------------------------------------------------
 DATA_WEAK = [
     "analytics",
@@ -126,19 +145,16 @@ DATA_WEAK = [
     "kafka",
     "flink",
     "hadoop",
-    # AI/LLM weak signals
     "generative ai",
     "gen ai",
     "large language model",
     "llm",
     "nlp",
-    "ai analyst",
-    "ai scientist",
-    # Business/operations data-adjacent
-    "business analyst",
     "business intelligence analyst",
-    "operations research",
 ]
+
+# Keep DATA_STRONG as an alias so any external imports don't break
+DATA_STRONG = TIER_1_ROLES + TIER_2_ROLES
 
 # ---------------------------------------------------------------------------
 # Hard excludes — non-data roles → immediate "no"
@@ -327,6 +343,12 @@ def classify(title: str) -> ClassifyResult:
             return ClassifyResult(score=0, label="no")
     # ───────────────────────────────────────────────────────────────────────
 
+    # ── PROFILE MISMATCH: ML/LLM/AI engineering roles — score 0, never alert ─
+    for phrase in PROFILE_MISMATCH:
+        if phrase in t:
+            return ClassifyResult(score=0, label="no")
+    # ───────────────────────────────────────────────────────────────────────
+
     # Safety-net overrides that start with "data" but hit a hard-exclude phrase
     is_safety_net = any(override in t for override in DATA_SAFETY_NET_OVERRIDES)
 
@@ -341,14 +363,18 @@ def classify(title: str) -> ClassifyResult:
             if phrase in t:
                 return ClassifyResult(score=0, label="no")
 
-    # Base score from data-domain keyword match
-    strong = any(p in t for p in DATA_STRONG)
-    weak = any(p in t for p in DATA_WEAK)
-
-    if not (strong or weak):
+    # ── Tiered scoring ──────────────────────────────────────────────────────
+    if any(p in t for p in TIER_1_ROLES):
+        score = 92
+    elif any(p in t for p in TIER_2_ROLES):
+        score = 78
+    elif any(p in t for p in TIER_3_ROLES):
+        score = 55
+    elif any(p in t for p in DATA_WEAK):
+        score = 40
+    else:
         return ClassifyResult(score=0, label="no")
-
-    score = 90 if strong else 55
+    # ───────────────────────────────────────────────────────────────────────
 
     # Seniority cap — senior/staff/principal → "maybe"; director/vp → "no"
     for tok in SENIORITY_TOKENS:

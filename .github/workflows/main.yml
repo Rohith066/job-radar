@@ -2,7 +2,11 @@ name: Job Radar — Main Sources
 
 on:
   schedule:
-    - cron: "0 */3 * * *"    # Every 3 hours
+    # Weekdays: 9 AM and 2 PM EST (UTC-4 = UTC+0 offset of 13 and 18)
+    - cron: "0 13 * * 1-5"   # 9 AM EST weekdays
+    - cron: "0 18 * * 1-5"   # 2 PM EST weekdays
+    # Weekend: once daily at 10 AM EST (jobs posted Friday stay over weekend)
+    - cron: "0 14 * * 6,0"   # 10 AM EST Saturday & Sunday
   workflow_dispatch:           # Manual trigger
 
 permissions:

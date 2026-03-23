@@ -32,9 +32,10 @@ from .config import Config
 from .database import Database
 from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNotifier
 from .sources.base import Job, is_us_location
-from .utils.salary import detect_work_type
+from .utils.salary import detect_work_type, salary_passes_filter
 from .ml.scorer import ml_rescore, get_model_info
 from .dashboard import run_dashboard
+from .company_filter import company_score_adjustment
 from .sources.eightfold import EightfoldSource
 from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
@@ -556,6 +557,32 @@ def _dispatch_results(
     dropped = before_age - len(matched)
     if dropped:
         log.info("Age filter: dropped %d stale job(s) older than %d days", dropped, MAX_JOB_AGE_DAYS)
+
+    # Salary floor filter — drop jobs with explicitly stated sub-floor salaries
+    before_salary = len(matched)
+    matched = [j for j in matched if salary_passes_filter(getattr(j, "salary", ""))]
+    salary_dropped = before_salary - len(matched)
+    if salary_dropped:
+        log.info("Salary filter: dropped %d job(s) below $%s/yr floor", salary_dropped, "90,000")
+
+    # Company filter — hard-exclude staffing agencies / federal contractors,
+    # and apply score bonus for confirmed H1B sponsors
+    before_company = len(matched)
+    filtered_matched = []
+    for j in matched:
+        adj, reason = company_score_adjustment(j.company)
+        if adj == -999:
+            log.debug("Company filter excluded: %s (%s)", j.company, reason)
+            continue
+        if adj > 0:
+            j.score = min(100, j.score + adj)
+            # Re-evaluate label after boost
+            j.label = "yes" if j.score >= 70 else "maybe" if j.score >= 40 else "no"
+        filtered_matched.append(j)
+    excluded_count = before_company - len(filtered_matched)
+    if excluded_count:
+        log.info("Company filter: excluded %d job(s) (staffing/federal/mismatch)", excluded_count)
+    matched = filtered_matched
 
     # Deduplication — keep only one entry per (company, title) pair
     before_dedup = len(matched)
