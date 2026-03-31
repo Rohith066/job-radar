@@ -1,50 +1,101 @@
-ROHITH BAYYA
-Data Analyst | Commercial & KPI Analytics | Power BI | SQL | Python
+Rohith Bayya
+New York, NY — rohithbr6@gmail.com
+Data Analyst / Analytics Engineer — SQL · Python · dbt · Snowflake · Power BI · Tableau · KPI Governance · A/B Testing · Forecasting
 
-SKILLS
-SQL, Python, Power BI, DAX, Pandas, NumPy, Scikit-learn, Matplotlib, Plotly, Streamlit
-Azure, Azure SQL, Azure Data Lake, AWS, S3
-Snowflake, Databricks, PySpark, Spark, DuckDB
-dbt, Airflow, ETL, ELT, Data Pipeline, Data Modeling, Data Warehouse
-Tableau, Excel, Power Query
-A/B Testing, Experimentation, Statistical Significance, Hypothesis Testing
-KPI Monitoring, Dashboard Design, Reporting, Financial Analytics, Commercial Analytics
-Data Governance, Data Quality, Data Lineage
-Git, Docker, Agile, Scrum, Jira
+SUMMARY
+Data Analyst and Analytics Engineer with 4+ years of combined experience (including 2 years full-time) building production SQL pipelines, automated BI dashboards, KPI governance frameworks, and statistical models that drove data-informed decisions across Finance, Risk, Product, and Compliance. Proven single source of truth owner for multi-BU reporting at scale. Hands-on with dbt, Snowflake, Airflow, and Python analytics engineering (project-level); production-verified in SQL, Power BI, and Python. M.S. Data Analytics Engineering — George Mason University (2025). Leverages Claude daily for SQL acceleration, QA, and documentation workflows.
 
 EXPERIENCE
 
-XIT (Commercial Analytics)
-Data Analyst | Jan 2022 – Dec 2023
-- Built and owned 50+ commercial KPIs monitored across weekly and monthly business reviews for 15+ senior stakeholders
-- Designed and maintained self-service Power BI dashboards with DAX, reducing ad-hoc reporting requests by 40%
-- Ran frequentist A/B tests to evaluate pricing and promotional strategies; achieved 95% statistical significance
-- Processed 10M+ records using Python (Pandas, NumPy) and SQL Server for commercial performance reporting
-- Delivered 25% sustained improvement in target commercial KPIs through data-driven insights
+Sciencapholon — Remote
+Data & Analytics Engineer — Co-op / Intern, Part-Time (concurrent with M.S. completion) | Jan 2025 – Dec 2025
+- Designed and deployed a Python ingestion and transformation pipeline processing 10,000+ documents per cycle with schema normalization and business-rule validations — reduced manual report time 60% and improved throughput 40%.
+- Built a Streamlit self-serve analytics interface enabling non-technical stakeholders to resolve data requests independently — eliminated recurring ad-hoc backlog without engineering overhead.
+- Implemented per-stage failure logging, anomaly monitoring checks, and iterated validation rules across all production cycles — zero undetected pipeline failures during monitored period.
 
-H.A.D.E.S (Product Analytics)
-Data Analyst | May 2024 – Present
-- Built real-time dashboards for product performance monitoring and anomaly detection, reducing issue detection time by 35%
-- Developed classification model (accuracy improved from 82% to 91%) to identify performance anomalies
-- Handled 15+ weekly ad-hoc data requests from engineering and product teams
-- Reduced manual review overhead by 40% through automated data quality checks and pipeline monitoring
-- Delivered self-service Streamlit reporting tool for non-technical stakeholders
+H.A.D.E.S. — Remote
+Data Analytics Co-op / Intern | May 2024 – May 2025
+- Owned real-time Plotly product performance KPI dashboards across 3+ product iterations — eliminated 15+ weekly ad-hoc data requests, enabling product leadership to make go/no-go decisions independently.
+- Applied machine learning techniques in Python to engineer 12 domain-driven features from raw telemetry streams — raised classification accuracy from 82% to 91% (+9pp) and reduced manual review overhead ~40% per iteration.
+- Developed automated Python anomaly-detection pipelines on real-time data — reduced issue detection time 35% and unblocked 3 consecutive product releases.
+
+XIT Solutions — Hyderabad, India
+Data Analyst | Jan 2022 – Dec 2023
+- Served as single source of truth for commercial KPIs across 3 business units (Finance, Risk, Compliance): established a KPI governance framework with validation stored procedures, metadata documentation, and KPI lineage — adopted across 50+ reports and 15 senior leaders; eliminated metric definition disputes organization-wide.
+- Built and maintained 15+ Power BI executive dashboards covering daily operational, MBR, and QBR cadences for Finance, Risk, and Compliance leadership.
+- Authored 12+ SQL query optimizations (window functions, CTEs, indexed joins) over 10M+ record multi-source pipelines — achieved 45% load time reduction; adopted as team coding standards.
+- Automated 15+ reporting workflows in SQL + Python, compressing turnaround from 4 hours to 30 minutes (87% reduction); manual errors reduced to near zero.
+- Designed and executed a Frequentist A/B experiment across 8 product categories (6-month holdout) — achieved 25% stockout reduction sustained at 18–20% post-test; translated findings into strategic commercial recommendations.
+- Built ARIMA forecasting model for quarterly revenue, margin, and cost (8–12% MAPE, rolling 3-month holdout) — supported $2M+ annual budget planning cycle across 3 BUs.
+- Applied K-means segmentation to 200+ client accounts (3–5 clusters) — profiles adopted by the commercial team for targeted outreach strategy.
+- Investigated an intercompany transfer pricing discrepancy that had propagated undetected across 3 reporting systems for 2 quarters — synthesized findings into an executive summary and authored a remediation runbook.
+
+EDUCATION
+George Mason University — Arlington, VA
+M.S. Data Analytics Engineering
+
+Neil Gogte Institute of Technology — Hyderabad, India
+B.Tech. Computer Science
 
 PROJECTS
 
-EIA Grid Monitor (Energy Analytics)
-- Built interactive Tableau dashboard tracking US energy grid performance across 50 states
-- Automated ETL pipeline using Python and Airflow to ingest daily EIA API data
-- Used DuckDB and dbt for fast analytical queries on 5+ years of energy consumption data
+Cloud-Native Analytics Platform — dbt + Snowflake + Airflow
+Built end-to-end analytics stack: AWS S3 → PySpark → Snowflake medallion architecture → dbt (incremental models, schema tests, CI/CD) → Airflow DAGs; 1M+ records, 60% query latency reduction. Applied dimensional modeling (fact/dimension structure) throughout; all models documented and version-controlled via Git.
 
-CAIIEC (Policy Analytics)
-- Analyzed AI workforce and labor market datasets; built Power BI dashboards for trend monitoring
-- Enabled non-technical stakeholders to independently monitor labor-market trends
-- Applied statistical analysis using Python (SciPy, StatsModels) for trend validation
+ClimateGPT Fusion — AI-Assisted Multi-Agent Analytics
+Built Python + DuckDB multi-agent analytics system using Claude and ChatGPT with Text2SQL, LLMOps eval harness, and multi-agent orchestration — 3x research turnaround improvement.
 
-EDUCATION
-Master of Science, Data Analytics
-Bachelor of Engineering, Computer Science
+CAIIEC AI Workforce Capstone — George Mason / Schar School
+Cleaned 60K → 11K records (80% noise reduction) from REST APIs (Adzuna, Jooble, USAJobs) using Python + SQL; built Streamlit self-serve dashboard for 10+ government researchers; 100% ad-hoc elimination; findings published in CAIIEC national AI workforce policy brief for Schar School.
 
-CERTIFICATIONS
-Microsoft Certified: Power BI Data Analyst Associate (PL-300)
+EIA Grid Monitor — Automated Operational KPI Reporting
+Airflow DAG scheduling + Python pipeline + PostgreSQL + Tableau hourly KPI dashboards with threshold-based alerting and deviation index — production-grade automated monitoring with proactive alerting.
+
+MarketPulse — Revenue & Channel Analytics
+SQL + Python pipeline from REST APIs; time-series analysis and channel-level performance decomposition; Tableau dashboards surfacing revenue pacing, competitive benchmarking, and growth insights.
+
+Carvana Risk Analytics — ML Classification Pipeline
+End-to-end logistic regression pipeline in Python for risk classification with feature importance analysis, model validation, and performance metrics.
+
+NYC Crime Analytics — Tableau Executive Dashboards
+Multi-year public dataset analysis; Tableau dashboards with 5 data-driven recommendations; focused on executive storytelling and visualization best practices.
+
+SKILLS
+
+Work / Core:
+SQL (advanced — window functions, CTEs, multi-source joins, query optimization)
+Python (pandas, scikit-learn, feature engineering, anomaly detection, automation)
+Power BI (15+ exec dashboards, MBR/QBR)
+KPI governance and lineage
+A/B testing (Frequentist)
+ARIMA forecasting
+K-means segmentation
+stakeholder reporting
+data documentation
+
+Project / Academic:
+dbt (incremental models, schema tests, CI/CD)
+Snowflake (medallion architecture)
+Airflow
+Tableau
+Streamlit
+PySpark
+AWS S3
+PostgreSQL
+Docker
+Git / GitHub
+REST APIs
+DuckDB
+
+AI Tools:
+Claude (daily: SQL acceleration, QA, documentation, workflow automation)
+Python LLM integration
+Text2SQL
+multi-agent orchestration
+
+Studying:
+Looker / LookML
+BigQuery / GCP
+marketing attribution modeling
+subscription analytics
+GTM analytics (pipeline forecasting, CS health scoring)
