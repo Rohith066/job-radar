@@ -36,6 +36,7 @@ from .utils.salary import detect_work_type, salary_passes_filter
 from .ml.scorer import ml_rescore, get_model_info
 from .dashboard import run_dashboard
 from .company_filter import company_score_adjustment
+from .resume_matcher import batch_score_jobs
 from .sources.eightfold import EightfoldSource
 from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
@@ -598,6 +599,26 @@ def _dispatch_results(
         if not j.work_type:
             j.work_type = detect_work_type(title=j.title, location=j.location)
 
+    # Resume-vs-JD matching — fetch JD for jobs that don't have one yet,
+    # score against master resume, apply score adjustment, and auto-feed ML
+    resume_path = cfg.resume_path if hasattr(cfg, "resume_path") else "config/master_resume.txt"
+    matched = batch_score_jobs(matched, resume_path=resume_path)
+    for j in matched:
+        if j.resume_match > 0:
+            # +0 to +15 bonus scaled by how well resume matches JD
+            bonus = int(j.resume_match * 0.15)
+            j.score = min(100, j.score + bonus)
+            j.label = "yes" if j.score >= 70 else "maybe" if j.score >= 40 else "no"
+            # Auto-seed ML feedback for strong matches — bootstraps model
+            # without waiting for manual --applied / --interested input
+            if j.resume_match >= 75 and db.is_new_job(j.key):
+                try:
+                    db.record_feedback(j.key, "interested")
+                    log.debug("Auto-feedback 'interested' for %s — %s (match %d%%)",
+                              j.company, j.title, j.resume_match)
+                except Exception:
+                    pass
+
     # ML re-scoring: adjusts scores based on your applied/dismissed feedback
     # Skipped automatically if fewer than 10 feedback entries exist (cold start)
     matched = ml_rescore(matched, db=db)
@@ -649,6 +670,8 @@ def _dispatch_results(
                 score=j.score, label=j.label,
                 work_type=getattr(j, "work_type", ""),
                 salary=getattr(j, "salary", ""),
+                resume_match=getattr(j, "resume_match", 0),
+                description=getattr(j, "description", ""),
             )
         log.debug("Saved %d jobs to database.", len(matched))
 

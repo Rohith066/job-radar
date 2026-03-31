@@ -1,0 +1,50 @@
+ROHITH BAYYA
+Data Analyst | Commercial & KPI Analytics | Power BI | SQL | Python
+
+SKILLS
+SQL, Python, Power BI, DAX, Pandas, NumPy, Scikit-learn, Matplotlib, Plotly, Streamlit
+Azure, Azure SQL, Azure Data Lake, AWS, S3
+Snowflake, Databricks, PySpark, Spark, DuckDB
+dbt, Airflow, ETL, ELT, Data Pipeline, Data Modeling, Data Warehouse
+Tableau, Excel, Power Query
+A/B Testing, Experimentation, Statistical Significance, Hypothesis Testing
+KPI Monitoring, Dashboard Design, Reporting, Financial Analytics, Commercial Analytics
+Data Governance, Data Quality, Data Lineage
+Git, Docker, Agile, Scrum, Jira
+
+EXPERIENCE
+
+XIT (Commercial Analytics)
+Data Analyst | Jan 2022 – Dec 2023
+- Built and owned 50+ commercial KPIs monitored across weekly and monthly business reviews for 15+ senior stakeholders
+- Designed and maintained self-service Power BI dashboards with DAX, reducing ad-hoc reporting requests by 40%
+- Ran frequentist A/B tests to evaluate pricing and promotional strategies; achieved 95% statistical significance
+- Processed 10M+ records using Python (Pandas, NumPy) and SQL Server for commercial performance reporting
+- Delivered 25% sustained improvement in target commercial KPIs through data-driven insights
+
+H.A.D.E.S (Product Analytics)
+Data Analyst | May 2024 – Present
+- Built real-time dashboards for product performance monitoring and anomaly detection, reducing issue detection time by 35%
+- Developed classification model (accuracy improved from 82% to 91%) to identify performance anomalies
+- Handled 15+ weekly ad-hoc data requests from engineering and product teams
+- Reduced manual review overhead by 40% through automated data quality checks and pipeline monitoring
+- Delivered self-service Streamlit reporting tool for non-technical stakeholders
+
+PROJECTS
+
+EIA Grid Monitor (Energy Analytics)
+- Built interactive Tableau dashboard tracking US energy grid performance across 50 states
+- Automated ETL pipeline using Python and Airflow to ingest daily EIA API data
+- Used DuckDB and dbt for fast analytical queries on 5+ years of energy consumption data
+
+CAIIEC (Policy Analytics)
+- Analyzed AI workforce and labor market datasets; built Power BI dashboards for trend monitoring
+- Enabled non-technical stakeholders to independently monitor labor-market trends
+- Applied statistical analysis using Python (SciPy, StatsModels) for trend validation
+
+EDUCATION
+Master of Science, Data Analytics
+Bachelor of Engineering, Computer Science
+
+CERTIFICATIONS
+Microsoft Certified: Power BI Data Analyst Associate (PL-300)

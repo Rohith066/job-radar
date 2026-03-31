@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     label        TEXT NOT NULL DEFAULT 'no',
     work_type    TEXT NOT NULL DEFAULT '',
     salary       TEXT NOT NULL DEFAULT '',
+    resume_match INTEGER NOT NULL DEFAULT 0,
+    description  TEXT NOT NULL DEFAULT '',
     first_seen   TEXT NOT NULL,
     last_seen    TEXT NOT NULL
 );
@@ -95,8 +97,10 @@ class Database:
             row[1] for row in self._conn.execute("PRAGMA table_info(jobs)").fetchall()
         }
         additions = {
-            "work_type": "TEXT NOT NULL DEFAULT ''",
-            "salary":    "TEXT NOT NULL DEFAULT ''",
+            "work_type":    "TEXT NOT NULL DEFAULT ''",
+            "salary":       "TEXT NOT NULL DEFAULT ''",
+            "resume_match": "INTEGER NOT NULL DEFAULT 0",
+            "description":  "TEXT NOT NULL DEFAULT ''",
         }
         for col, definition in additions.items():
             if col not in existing:
@@ -138,13 +142,16 @@ class Database:
         label: str,
         work_type: str = "",
         salary: str = "",
+        resume_match: int = 0,
+        description: str = "",
     ) -> None:
         now = _now()
         with self._tx() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs(key,source,company,title,location,url,posted,score,label,work_type,salary,first_seen,last_seen)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO jobs(key,source,company,title,location,url,posted,score,label,
+                                 work_type,salary,resume_match,description,first_seen,last_seen)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(key) DO UPDATE SET
                     title=excluded.title,
                     location=excluded.location,
@@ -154,9 +161,12 @@ class Database:
                     label=excluded.label,
                     work_type=excluded.work_type,
                     salary=excluded.salary,
+                    resume_match=excluded.resume_match,
+                    description=excluded.description,
                     last_seen=excluded.last_seen
                 """,
-                (key, source, company, title, location, url, posted, score, label, work_type, salary, now, now),
+                (key, source, company, title, location, url, posted, score, label,
+                 work_type, salary, resume_match, description, now, now),
             )
 
     def source_is_bootstrapped(self, source: str) -> bool:

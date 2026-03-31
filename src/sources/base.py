@@ -26,6 +26,8 @@ class Job:
     label: str = "no"
     salary: str = ""        # e.g. "$80,000 – $120,000/yr" — empty when not available
     work_type: str = ""     # "Remote" | "Hybrid" | "Onsite" | "" when unknown
+    description: str = ""  # raw JD text (HTML stripped) — populated when available
+    resume_match: int = 0  # 0-100 resume-vs-JD match score; 0 = not yet scored
 
 
 def make_location(parts: list[Optional[str]]) -> str:

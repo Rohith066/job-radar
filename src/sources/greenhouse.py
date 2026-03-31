@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlparse
 
 from ..classifier import classify
@@ -62,11 +63,15 @@ class GreenhouseSource(BaseSource):
             loc = str(loc_obj.get("name", "Unknown Location")) if isinstance(loc_obj, dict) else "Unknown Location"
             posted = raw.get("updated_at") or raw.get("created_at") or ""
             url_job = raw.get("absolute_url") or raw.get("url") or self.board_url
+            # Greenhouse returns HTML content when fetched with ?content=true
+            html = raw.get("content") or ""
+            description = re.sub(r"<[^>]+>", " ", html).strip() if html else ""
             cr = classify(title)
             result.append(Job(
                 key=key, source="greenhouse", company=self.company,
                 title=title, location=loc, url=url_job,
                 posted=posted, score=cr.score, label=cr.label,
+                description=description,
             ))
 
         log.debug("greenhouse:%s: fetched %d jobs", self._slug, len(result))

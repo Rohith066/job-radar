@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -67,11 +68,22 @@ class LeverSource(BaseSource):
                 posted = posted_raw
 
             url_job = raw.get("hostedUrl") or raw.get("applyUrl") or self.board_url
+            # Lever returns plain-text description in 'descriptionPlain' or HTML in 'description'
+            desc_plain = raw.get("descriptionPlain") or ""
+            desc_html  = raw.get("description") or ""
+            extra_plain = raw.get("additionalPlain") or ""
+            if desc_plain:
+                description = f"{desc_plain}\n{extra_plain}".strip()
+            elif desc_html:
+                description = re.sub(r"<[^>]+>", " ", desc_html).strip()
+            else:
+                description = ""
             cr = classify(title)
             result.append(Job(
                 key=key, source="lever", company=self.company,
                 title=title, location=loc, url=url_job,
                 posted=posted, score=cr.score, label=cr.label,
+                description=description,
             ))
 
         log.debug("lever:%s: fetched %d jobs", self._slug_val, len(result))

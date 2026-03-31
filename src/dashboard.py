@@ -73,6 +73,9 @@ _HTML = """\
   .badge-remote {{ background: #dbeafe; color: #1e40af; }}
   .badge-hybrid {{ background: #ede9fe; color: #5b21b6; }}
   .badge-onsite {{ background: #fee2e2; color: #991b1b; }}
+  .badge-match-hi  {{ background: #dcfce7; color: #15803d; }}
+  .badge-match-mid {{ background: #fef9c3; color: #92400e; }}
+  .badge-match-lo  {{ background: #f3f4f6; color: #6b7280; }}
   .actions {{ display: flex; flex-direction: column; gap: 8px; min-width: 120px; }}
   .btn {{ border: none; border-radius: 8px; padding: 8px 12px; cursor: pointer;
           font-size: 13px; font-weight: 600; width: 100%; transition: opacity .15s; }}
@@ -168,6 +171,10 @@ function renderJobs(jobs) {{
     if (!list.length) return '';
     let cards = list.map(j => {{
       const scoreBadge = badge('Score ' + j.score, 'badge-score');
+      const rm = j.resume_match || 0;
+      const matchBadge = rm > 0
+        ? badge('Match ' + rm + '%', rm >= 70 ? 'badge-match-hi' : rm >= 45 ? 'badge-match-mid' : 'badge-match-lo')
+        : '';
       const wt         = workBadge(j.work_type || '');
       const sal        = j.salary ? `<span style="color:#15803d;font-weight:600;margin-left:6px;">💰 ${{j.salary}}</span>` : '';
       const posted     = j.posted ? ` · ${{j.posted}}` : '';
@@ -180,7 +187,7 @@ function renderJobs(jobs) {{
       return `
       <div class="card ${{j.label}}${{j.feedback ? ' done' : ''}}">
         <div class="job-info">
-          <div class="job-title">${{j.company}} — ${{j.title}} ${{scoreBadge}}${{wt}}</div>
+          <div class="job-title">${{j.company}} — ${{j.title}} ${{scoreBadge}}${{matchBadge}}${{wt}}</div>
           <div class="job-meta">${{j.location}}${{posted}}${{sal}}</div>
           <a class="job-link" href="${{j.url}}" target="_blank">View Job →</a>
         </div>
@@ -274,6 +281,7 @@ def _get_recent_jobs() -> list[dict]:
     rows = _db._conn.execute(
         """SELECT j.key, j.company, j.title, j.url, j.location,
                   j.posted, j.score, j.label, j.work_type, j.salary,
+                  COALESCE(j.resume_match, 0) as resume_match,
                   f.action as feedback
            FROM jobs j
            LEFT JOIN (
@@ -282,7 +290,7 @@ def _get_recent_jobs() -> list[dict]:
            ) f ON f.job_key = j.key
            WHERE j.label IN ('yes', 'maybe')
              AND j.first_seen >= datetime('now', '-14 days')
-           ORDER BY j.label DESC, j.score DESC
+           ORDER BY j.label DESC, j.resume_match DESC, j.score DESC
            LIMIT 200"""
     ).fetchall()
 
