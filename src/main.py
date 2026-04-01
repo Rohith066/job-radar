@@ -603,6 +603,14 @@ def _dispatch_results(
     # score against master resume, apply score adjustment, and auto-feed ML
     resume_path = cfg.resume_path if hasattr(cfg, "resume_path") else "config/master_resume.txt"
     matched = batch_score_jobs(matched, resume_path=resume_path)
+
+    # Experience filter — drop jobs that require more years than we have
+    before_exp = len(matched)
+    matched = [j for j in matched if getattr(j, "experience_ok", True)]
+    exp_dropped = before_exp - len(matched)
+    if exp_dropped:
+        log.info("Experience filter: dropped %d job(s) requiring too many years", exp_dropped)
+
     for j in matched:
         if j.resume_match > 0:
             # +0 to +15 bonus scaled by how well resume matches JD

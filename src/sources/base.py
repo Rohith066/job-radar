@@ -28,6 +28,7 @@ class Job:
     work_type: str = ""     # "Remote" | "Hybrid" | "Onsite" | "" when unknown
     description: str = ""  # raw JD text (HTML stripped) — populated when available
     resume_match: int = 0  # 0-100 resume-vs-JD match score; 0 = not yet scored
+    experience_ok: bool = True  # False when JD requires more years than MAX_EXPERIENCE_YEARS
 
 
 def make_location(parts: list[Optional[str]]) -> str:

@@ -34,6 +34,87 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Experience requirement extraction
+# ---------------------------------------------------------------------------
+
+# Max years of experience we accept. Jobs requiring strictly MORE are dropped.
+MAX_EXPERIENCE_YEARS = 4
+
+# Word → digit map for written-out numbers
+_WORD_NUMS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+# Matches patterns like:
+#   "5+ years", "5-7 years", "5 to 7 years", "minimum 5 years",
+#   "at least 5 years", "five years of experience", "5 years experience"
+_EXP_RE = re.compile(
+    r"""
+    (?:
+        # "minimum/at least/minimum of N"
+        (?:minimum\s+(?:of\s+)?|at\s+least\s+|(?:a\s+)?minimum\s+of\s+)?
+        # digit or word number
+        (?P<lo>\d+|one|two|three|four|five|six|seven|eight|nine|ten)
+        # optional range "- N" or "to N"
+        (?:\s*[-–to]+\s*(?P<hi>\d+|one|two|three|four|five|six|seven|eight|nine|ten))?
+        # optional plus
+        \s*\+?
+        \s*[-–]?\s*
+        # "year(s)" must follow within a few words
+        (?:years?|yrs?)
+        \s*
+        (?:of\s+)?
+        # must be experience context
+        (?:experience|work\s+experience|professional\s+experience|industry\s+experience|
+           relevant\s+experience|related\s+experience|hands[\s-]on\s+experience)?
+    )
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def extract_required_experience(jd_text: str) -> Optional[int]:
+    """Return the minimum years of experience required by the JD.
+
+    Returns None if no experience requirement is found (job passes through).
+    When a range is found (e.g. "3-5 years"), returns the lower bound (3).
+    """
+    if not jd_text:
+        return None
+
+    best: Optional[int] = None
+    for m in _EXP_RE.finditer(jd_text):
+        lo_raw = m.group("lo") or ""
+        lo = _WORD_NUMS.get(lo_raw.lower(), None)
+        if lo is None:
+            try:
+                lo = int(lo_raw)
+            except ValueError:
+                continue
+        # Ignore unrealistically large values (e.g. "10,000 years")
+        if lo > 20:
+            continue
+        # Take the minimum across all mentions — job may list different
+        # requirements for different sections; we want the lowest bar
+        if best is None or lo < best:
+            best = lo
+    return best
+
+
+def experience_passes_filter(jd_text: str, max_years: int = MAX_EXPERIENCE_YEARS) -> tuple[bool, Optional[int]]:
+    """Return (passes, required_years).
+
+    passes=True  → job is within our experience range or requirement unknown
+    passes=False → job explicitly requires more than max_years
+    """
+    required = extract_required_experience(jd_text)
+    if required is None:
+        return True, None
+    return required <= max_years, required
+
+
+# ---------------------------------------------------------------------------
 # Skill taxonomy  — comprehensive data/analytics keyword list
 # ---------------------------------------------------------------------------
 _SKILLS: list[str] = [
@@ -102,6 +183,8 @@ class ResumeMatchResult:
     missing_skills: list[str] = field(default_factory=list)
     jd_skill_count: int = 0         # total skills found in JD
     has_jd: bool = False            # False when JD was unavailable
+    required_experience: Optional[int] = None   # years required per JD; None = not stated
+    experience_ok: bool = True      # False → job filtered out (over-experience requirement)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +283,9 @@ def score_resume_vs_jd(
             overall_score=0, skill_score=0, tfidf_score=0, has_jd=bool(jd_text)
         )
 
+    # ── Experience filter ────────────────────────────────────────────────────
+    exp_ok, req_years = experience_passes_filter(jd_text)
+
     # ── Skill match ─────────────────────────────────────────────────────────
     jd_skills   = _extract_skills_from_text(jd_text)
     jd_skill_set = set(jd_skills)
@@ -241,6 +327,8 @@ def score_resume_vs_jd(
         missing_skills=sorted(missing),
         jd_skill_count=len(jd_skill_set),
         has_jd=True,
+        required_experience=req_years,
+        experience_ok=exp_ok,
     )
 
 
@@ -337,15 +425,23 @@ def batch_score_jobs(jobs: list, resume_path: str = "") -> list:
             try:
                 job, result = fut.result()
                 job.resume_match = result.overall_score
+                job.experience_ok = result.experience_ok
                 if result.has_jd:
-                    log.debug(
-                        "Resume match: %s — %s → %d%% (skills %d%%, tfidf %d%%, "
-                        "matched: %s, missing: %s)",
-                        job.company, job.title,
-                        result.overall_score, result.skill_score, result.tfidf_score,
-                        ", ".join(result.matched_skills[:5]) or "none",
-                        ", ".join(result.missing_skills[:5]) or "none",
-                    )
+                    if not result.experience_ok:
+                        log.info(
+                            "Experience filter: skipping %s — %s (requires %d yrs, max %d)",
+                            job.company, job.title,
+                            result.required_experience or 0, MAX_EXPERIENCE_YEARS,
+                        )
+                    else:
+                        log.debug(
+                            "Resume match: %s — %s → %d%% (skills %d%%, tfidf %d%%, "
+                            "matched: %s, missing: %s)",
+                            job.company, job.title,
+                            result.overall_score, result.skill_score, result.tfidf_score,
+                            ", ".join(result.matched_skills[:5]) or "none",
+                            ", ".join(result.missing_skills[:5]) or "none",
+                        )
             except Exception as e:
                 log.debug("Resume match error for job: %s", e)
 
