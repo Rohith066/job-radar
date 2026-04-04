@@ -12,6 +12,20 @@ US_STATE_ABBRS = frozenset({
     "or","pa","ri","sc","sd","tn","tx","ut","vt","va","wa","wv","wi","wy","dc",
 })
 
+# Non-US country names / regions — any location containing these is rejected
+# even if it also contains the word "remote"
+_NON_US_COUNTRIES = frozenset({
+    "argentina", "colombia", "brazil", "brasil", "mexico", "méxico",
+    "canada", "united kingdom", "uk", "england", "scotland", "ireland",
+    "australia", "india", "germany", "france", "spain", "netherlands",
+    "poland", "portugal", "italy", "sweden", "norway", "denmark",
+    "singapore", "japan", "china", "hong kong", "new zealand",
+    "south africa", "nigeria", "kenya", "philippines", "indonesia",
+    "pakistan", "bangladesh", "sri lanka", "ukraine", "russia",
+    "israel", "turkey", "egypt", "uae", "dubai", "saudi arabia",
+    "latin america", "latam", "south america", "europe", "emea", "apac",
+})
+
 
 @dataclass
 class Job:
@@ -37,17 +51,27 @@ def make_location(parts: list[Optional[str]]) -> str:
 
 
 def is_us_location(location: str) -> bool:
-    """Return True if the location string is plausibly US-based."""
+    """Return True if the location string is plausibly US-based.
+
+    Hard-blocks non-US countries even when "remote" appears in the string
+    (e.g. "Remote - Argentina" must NOT pass).
+    """
     loc = (location or "").strip().lower()
     if not loc or loc == "unknown location":
         return False
+
+    # Hard-block any location containing a known non-US country name
+    for country in _NON_US_COUNTRIES:
+        if country in loc:
+            return False
+
     if "united states" in loc or "u.s." in loc:
         return True
     if re.search(r"\busa\b", loc):
         return True
     if re.search(r"\bus\b", loc):
         return True
-    # Accept any remote job — sources already filter to US at the API level
+    # Accept remote jobs that aren't tied to a non-US country (checked above)
     if "remote" in loc:
         return True
     if "washington, dc" in loc or "district of columbia" in loc:

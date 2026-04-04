@@ -176,7 +176,7 @@ def build_notifier(cfg: Config) -> CompositeNotifier:
 # Job age filter — drop stale listings older than MAX_JOB_AGE_DAYS
 # ---------------------------------------------------------------------------
 
-MAX_JOB_AGE_DAYS = 7   # only alert on jobs posted within the last 7 days
+MAX_JOB_AGE_DAYS = 3   # only alert on jobs posted within the last 3 days
 
 _DATE_FORMATS = [
     "%Y-%m-%dT%H:%M:%S%z",
