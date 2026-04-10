@@ -631,8 +631,15 @@ def _dispatch_results(
     # Skipped automatically if fewer than 10 feedback entries exist (cold start)
     matched = ml_rescore(matched, db=db)
 
-    yes_jobs = sorted([j for j in matched if j.label == "yes"], key=lambda j: j.score, reverse=True)
-    maybe_jobs = sorted([j for j in matched if j.label == "maybe"], key=lambda j: j.score, reverse=True)
+    # Sort by recency first (newest at top), score as tiebreaker —
+    # being early to apply matters more than score ordering
+    def _recency_key(j: Job) -> tuple:
+        dt = _parse_posted(j.posted)
+        ts = dt.timestamp() if dt else 0.0
+        return (-ts, -j.score)   # negative ts → newest sorts first
+
+    yes_jobs   = sorted([j for j in matched if j.label == "yes"],   key=_recency_key)
+    maybe_jobs = sorted([j for j in matched if j.label == "maybe"],  key=_recency_key)
 
     log.info("Matched: %d yes, %d maybe", len(yes_jobs), len(maybe_jobs))
 

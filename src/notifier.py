@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re as _re
 import smtplib
 import ssl
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -24,6 +26,72 @@ from .sources.base import Job
 from .profile import PROFILE, profile_summary_html, profile_summary_text
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Freshness helpers
+# ---------------------------------------------------------------------------
+
+def _hours_ago(posted: str) -> Optional[float]:
+    """Convert a posted string to approximate hours since posted.
+    Returns None if the string can't be parsed."""
+    if not posted:
+        return None
+    now = datetime.now(timezone.utc)
+    p = posted.strip().lower()
+    # Relative strings — "2 hours ago", "30 minutes ago", "3 days ago"
+    m = _re.search(r'(\d+)\s*(minute|hour|day|week)', p)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        if 'minute' in unit: return n / 60.0
+        if 'hour'   in unit: return float(n)
+        if 'day'    in unit: return n * 24.0
+        if 'week'   in unit: return n * 168.0
+    if any(x in p for x in ('just now', 'moments ago')):
+        return 0.0
+    if 'today' in p:
+        return 3.0       # conservative estimate — counts as same-day
+    if 'yesterday' in p:
+        return 28.0
+    # ISO / plain date strings
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(posted.strip(), fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return max(0.0, (now - dt).total_seconds() / 3600.0)
+        except ValueError:
+            continue
+    return None
+
+
+def _freshness_badge_html(posted: str) -> str:
+    """Return an HTML badge string for how fresh a posting is."""
+    h = _hours_ago(posted)
+    if h is None:
+        return ""
+    if h < 2:
+        return '<span class="badge-hot">&#128293; Just Posted</span>'
+    if h < 6:
+        return '<span class="badge-new">&#9889; &lt; 6 hrs ago</span>'
+    if h < 24:
+        return '<span class="badge-today">&#128197; Today</span>'
+    return ""
+
+
+def _posted_friendly(posted: str) -> str:
+    """Human-readable posted time — e.g. '2 hours ago', 'today', '2026-04-09'."""
+    h = _hours_ago(posted)
+    if h is None:
+        return posted or ""
+    if h < 1:
+        mins = int(h * 60)
+        return f"{mins}m ago" if mins > 1 else "just now"
+    if h < 24:
+        return f"{int(h)}h ago"
+    days = int(h / 24)
+    return f"{days}d ago" if days < 7 else posted
+
 
 # ---------------------------------------------------------------------------
 # HTML email template
@@ -71,6 +139,20 @@ _HTML_TEMPLATE = """\
                      font-weight: 600; border-radius: 999px; padding: 2px 8px;
                      margin-left: 6px; vertical-align: middle; }}
   .salary-line {{ font-size: 13px; color: #15803d; font-weight: 600; margin-left: 6px; }}
+  /* Freshness badges */
+  .badge-hot   {{ background: #fee2e2; color: #dc2626; font-size: 11px; font-weight: 700;
+                  border-radius: 999px; padding: 2px 10px; margin-right: 4px; }}
+  .badge-new   {{ background: #fef9c3; color: #b45309; font-size: 11px; font-weight: 700;
+                  border-radius: 999px; padding: 2px 10px; margin-right: 4px; }}
+  .badge-today {{ background: #dbeafe; color: #1d4ed8; font-size: 11px; font-weight: 700;
+                  border-radius: 999px; padding: 2px 10px; margin-right: 4px; }}
+  .badge-match {{ background: #f0fdf4; color: #15803d; font-size: 11px; font-weight: 600;
+                  border-radius: 999px; padding: 2px 8px; margin-left: 6px; vertical-align: middle; }}
+  /* Apply button */
+  .apply-btn   {{ display: inline-block; background: #16a34a; color: #fff !important;
+                  text-decoration: none; font-weight: 700; font-size: 14px;
+                  padding: 9px 22px; border-radius: 6px; margin-top: 10px;
+                  letter-spacing: 0.02em; }}
   .footer {{ background: #f9f9f9; border-top: 1px solid #eee;
              padding: 14px 28px; font-size: 12px; color: #888; }}
   .stats {{ display: flex; gap: 20px; margin-bottom: 16px; }}
@@ -106,11 +188,12 @@ _HTML_TEMPLATE = """\
 
 _JOB_CARD = """\
 <div class="job-card job-card-{label}">
+  <p style="margin:0 0 6px;">{freshness_badge}</p>
   <p class="job-title">{company} &mdash; {title}
-    <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}
+    <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}{match_badge}
   </p>
-  <p class="job-meta">{location}{posted_line}{salary_line}</p>
-  <a class="job-link" href="{url}" target="_blank">View Job &rarr;</a>
+  <p class="job-meta">{location} &middot; {posted_friendly}{salary_line}</p>
+  <a class="apply-btn" href="{url}" target="_blank">&#9889; APPLY NOW &rarr;</a>
 </div>"""
 
 _SECTION = """\
@@ -125,7 +208,9 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
     profile_line = profile_summary_html()
 
     def _card(job: Job) -> str:
-        posted_line = f" &middot; {job.posted}" if job.posted else ""
+        # Freshness
+        freshness_badge = _freshness_badge_html(job.posted)
+        posted_str = _posted_friendly(job.posted)
         # Work-type badge
         wt = (job.work_type or "").strip()
         if wt == "Remote":
@@ -136,6 +221,16 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             work_type_badge = '<span class="badge-onsite">&#127970; Onsite</span>'
         else:
             work_type_badge = ""
+        # Resume match badge
+        rm = getattr(job, "resume_match", 0)
+        if rm >= 70:
+            match_badge = f'<span class="badge-match">&#9989; {rm}% match</span>'
+        elif rm >= 45:
+            match_badge = f'<span class="badge-match" style="background:#fef9c3;color:#a16207;">&#128993; {rm}% match</span>'
+        elif rm > 0:
+            match_badge = f'<span class="badge-match" style="background:#f3f4f6;color:#6b7280;">{rm}% match</span>'
+        else:
+            match_badge = ""
         # Salary line
         salary_line = (
             f' &middot; <span class="salary-line">&#128176; {job.salary}</span>'
@@ -147,9 +242,11 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             title=job.title,
             score=job.score,
             location=job.location,
-            posted_line=posted_line,
+            freshness_badge=freshness_badge,
+            posted_friendly=posted_str,
             salary_line=salary_line,
             work_type_badge=work_type_badge,
+            match_badge=match_badge,
             url=job.url,
         )
 
@@ -188,11 +285,17 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
 def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job], source_errors: list[str] | None = None) -> str:
     lines: list[str] = []
     def _txt_job(j: Job) -> list[str]:
-        posted = f" | {j.posted}" if j.posted else ""
-        wt = f" | {j.work_type}" if j.work_type else ""
-        sal = f" | {j.salary}" if j.salary else ""
+        posted = _posted_friendly(j.posted)
+        fresh  = _hours_ago(j.posted)
+        fresh_tag = " 🔥 JUST POSTED" if fresh is not None and fresh < 2 else (
+                    " ⚡ < 6 HRS"     if fresh is not None and fresh < 6 else "")
+        wt  = f" | {j.work_type}" if j.work_type else ""
+        sal = f" | {j.salary}"    if j.salary    else ""
+        rm  = getattr(j, "resume_match", 0)
+        match_str = f" | Match {rm}%" if rm > 0 else ""
         return [
-            f"[{j.company}] {j.title} | {j.location}{wt}{posted}{sal}",
+            f"[{j.company}] {j.title}{fresh_tag}",
+            f"  {j.location}{wt} | Posted: {posted}{sal}{match_str}",
             f"  Score: {j.score}  {j.url}",
             "",
         ]
@@ -247,7 +350,14 @@ class EmailNotifier(BaseNotifier):
         all_jobs = yes_jobs + maybe_jobs
         companies = sorted({j.company for j in all_jobs if j.company})
         company_str = ", ".join(companies[:4]) + ("…" if len(companies) > 4 else "")
-        subject = f"{subject_prefix} {len(yes_jobs)} match + {len(maybe_jobs)} review — {company_str}"
+        fresh_jobs = [j for j in all_jobs if (_hours_ago(j.posted) or 999) <= 4]
+        if fresh_jobs:
+            subject = (
+                f"🔥 {len(fresh_jobs)} fresh job{'s' if len(fresh_jobs) > 1 else ''} — "
+                f"{len(yes_jobs)} match + {len(maybe_jobs)} review | {company_str}"
+            )
+        else:
+            subject = f"{subject_prefix} {len(yes_jobs)} match + {len(maybe_jobs)} review — {company_str}"
 
         html_body = _build_html(yes_jobs, maybe_jobs, mode, source_errors)
         text_body = _build_plaintext(yes_jobs, maybe_jobs, source_errors)
