@@ -1,0 +1,33 @@
+name: Job Radar — Follow-up Reminders
+
+on:
+  schedule:
+    # Every Monday at 10 AM EDT (14:00 UTC) — start the week knowing who to follow up with
+    - cron: "0 14 * * 1"
+  workflow_dispatch:   # Manual trigger anytime
+
+permissions:
+  contents: read       # Read-only — no DB writes needed
+
+jobs:
+  followup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send follow-up reminders
+        env:
+          EMAIL_USER:         ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL:     ${{ secrets.ALERT_TO_EMAIL }}
+        run: python -m src.main --followup

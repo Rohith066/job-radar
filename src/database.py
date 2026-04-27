@@ -328,11 +328,62 @@ class Database:
     # Feedback (ML training signal)
     # -------------------------------------------------------------------------
 
-    def record_feedback(self, job_key: str, action: str, notes: str = "") -> bool:
-        """Store user feedback for a job. action: 'applied' | 'dismissed' | 'interested'.
-        Returns True if the job_key exists in the jobs table, False otherwise.
+    def count_company_posts(self, company: str, title: str) -> int:
+        """Count how many times we have seen a similar title from this company.
+        Used by the ghost detector to flag evergreen / re-posted listings."""
+        title_prefix = (title or "")[:18].lower()
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE lower(company)=lower(?) AND lower(title) LIKE ?",
+            (company.strip(), f"{title_prefix}%"),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_followup_due(self, days: int = 7) -> list[dict]:
+        """Return jobs you applied to >= days ago with no follow-up action recorded.
+
+        Filters out jobs that already have a 'followed_up', 'responded',
+        'rejected', or 'offer' feedback entry after the 'applied' entry.
         """
-        valid_actions = {"applied", "dismissed", "interested"}
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        rows = self._conn.execute(
+            """
+            SELECT f.job_key,
+                   f.created_at   AS applied_at,
+                   j.company,
+                   j.title,
+                   j.url,
+                   j.location,
+                   j.work_type,
+                   j.salary
+            FROM   feedback f
+            JOIN   jobs j ON j.key = f.job_key
+            WHERE  f.action = 'applied'
+              AND  f.created_at <= ?
+              AND  NOT EXISTS (
+                       SELECT 1 FROM feedback f2
+                       WHERE  f2.job_key = f.job_key
+                         AND  f2.action IN ('followed_up','responded','rejected','offer')
+                         AND  f2.created_at > f.created_at
+                   )
+            ORDER  BY f.created_at ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_feedback(self, job_key: str, action: str, notes: str = "") -> bool:
+        """Store user feedback for a job.
+
+        action: 'applied' | 'dismissed' | 'interested' |
+                'followed_up' | 'responded' | 'rejected' | 'offer'
+
+        Returns True if the job_key exists in the jobs table.
+        """
+        valid_actions = {
+            "applied", "dismissed", "interested",
+            "followed_up", "responded", "rejected", "offer",
+        }
         if action not in valid_actions:
             raise ValueError(f"action must be one of {valid_actions}, got {action!r}")
         # Verify job exists (warn but still record so feedback isn't lost)

@@ -185,6 +185,7 @@ class ResumeMatchResult:
     has_jd: bool = False            # False when JD was unavailable
     required_experience: Optional[int] = None   # years required per JD; None = not stated
     experience_ok: bool = True      # False → job filtered out (over-experience requirement)
+    top_bullets: list[str] = field(default_factory=list)  # top matching resume bullets
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +239,63 @@ def _is_required_context(text: str, skill: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Resume bullet extraction (for "lead with these" highlights in email)
+# ---------------------------------------------------------------------------
+
+def _extract_resume_bullets(resume_text: str) -> list[str]:
+    """Pull achievement bullet lines from resume text."""
+    bullets = []
+    for line in resume_text.splitlines():
+        line = line.strip()
+        if not line or len(line) < 28 or len(line) > 260:
+            continue
+        # Lines starting with common bullet symbols
+        if line[0] in "•-*→▪◦►–":
+            clean = line.lstrip("•-*→▪◦►–– ").strip()
+            if len(clean) >= 25:
+                bullets.append(clean)
+        # Lines with quantifiable metrics (numbers + %, $, K) anywhere — strong achievement signal
+        elif re.search(r"\d+\s*%|\$\s*\d|\d+\s*[Kk]\b|\d{2,}", line):
+            bullets.append(line)
+    return list(dict.fromkeys(bullets))  # deduplicate, preserve order
+
+
+def top_resume_bullets(resume_text: str, jd_text: str, n: int = 3) -> list[str]:
+    """Return the N resume bullets most semantically relevant to this JD."""
+    bullets = _extract_resume_bullets(resume_text)
+    if not bullets:
+        return []
+    jd_words = set(re.findall(r"\b[a-z]{3,}\b", jd_text.lower()))
+
+    def _score(b: str) -> float:
+        b_words = set(re.findall(r"\b[a-z]{3,}\b", b.lower()))
+        overlap = len(b_words & jd_words)
+        has_metric = bool(re.search(r"\d+\s*%|\$\s*\d|\d+\s*[Kk]\b", b))
+        return overlap / (len(b_words) + 1) * (1.5 if has_metric else 1.0)
+
+    return sorted(bullets, key=_score, reverse=True)[:n]
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn DM generator
+# ---------------------------------------------------------------------------
+
+def generate_linkedin_dm(company: str, title: str, matched_skills: list[str]) -> str:
+    """Build a personalized, ready-to-copy LinkedIn outreach DM."""
+    if matched_skills:
+        skill_str = " and ".join(matched_skills[:2])
+        skill_line = f"My background in {skill_str} aligns directly with what you're looking for."
+    else:
+        skill_line = "My data analytics background aligns well with this role."
+    return (
+        f"Hi [Name], I came across the {title} opening at {company} and I'm genuinely excited. "
+        f"{skill_line} "
+        f"Would you be open to a quick 15-min chat? "
+        f"I'd love to learn more about the team and share how I can contribute."
+    )
+
+
+# ---------------------------------------------------------------------------
 # TF-IDF helper
 # ---------------------------------------------------------------------------
 
@@ -286,6 +344,9 @@ def score_resume_vs_jd(
     # ── Experience filter ────────────────────────────────────────────────────
     exp_ok, req_years = experience_passes_filter(jd_text)
 
+    # ── Resume bullet highlights ─────────────────────────────────────────────
+    bullets = top_resume_bullets(resume_text, jd_text, n=3)
+
     # ── Skill match ─────────────────────────────────────────────────────────
     jd_skills   = _extract_skills_from_text(jd_text)
     jd_skill_set = set(jd_skills)
@@ -329,6 +390,7 @@ def score_resume_vs_jd(
         has_jd=True,
         required_experience=req_years,
         experience_ok=exp_ok,
+        top_bullets=bullets,
     )
 
 
@@ -426,6 +488,11 @@ def batch_score_jobs(jobs: list, resume_path: str = "") -> list:
                 job, result = fut.result()
                 job.resume_match = result.overall_score
                 job.experience_ok = result.experience_ok
+                job.top_bullets  = result.top_bullets
+                if result.matched_skills:
+                    job.linkedin_dm = generate_linkedin_dm(
+                        job.company, job.title, result.matched_skills
+                    )
                 if result.has_jd:
                     if not result.experience_ok:
                         log.info(

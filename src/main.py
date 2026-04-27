@@ -37,6 +37,7 @@ from .ml.scorer import ml_rescore, get_model_info
 from .dashboard import run_dashboard
 from .company_filter import company_score_adjustment
 from .resume_matcher import batch_score_jobs
+from .ghost_detector import ghost_check
 from .sources.eightfold import EightfoldSource
 from .sources.amazon import AmazonSource
 from .sources.goldman import GoldmanSachsSource
@@ -627,6 +628,17 @@ def _dispatch_results(
                 except Exception:
                     pass
 
+    # Ghost job detection — flag suspicious/evergreen postings in email
+    ghost_flagged = 0
+    for j in matched:
+        result = ghost_check(j, db=db)
+        j.ghost_level   = result.level
+        j.ghost_reasons = result.reasons
+        if result.level:
+            ghost_flagged += 1
+    if ghost_flagged:
+        log.info("Ghost detector: flagged %d job(s) (caution/suspicious)", ghost_flagged)
+
     # ML re-scoring: adjusts scores based on your applied/dismissed feedback
     # Skipped automatically if fewer than 10 feedback entries exist (cold start)
     matched = ml_rescore(matched, db=db)
@@ -874,6 +886,29 @@ def run_feedback_summary(db: Database) -> None:
         print()
 
 
+def run_followup_reminder(db: Database, notifier) -> None:
+    """Send a follow-up reminder email for jobs applied 7+ days ago with no response."""
+    pending = db.get_followup_due(days=7)
+    if not pending:
+        log.info("Follow-up check: no stale applications — you're on top of things! 👍")
+        print("\n✅  No follow-ups due — all applications are within 7 days or already tracked.\n")
+        return
+
+    log.info("Follow-up check: %d application(s) awaiting follow-up", len(pending))
+    print(f"\n⏰  {len(pending)} application(s) waiting for a follow-up:\n")
+    for p in pending:
+        applied = (p.get("applied_at") or "")[:10]
+        print(f"  [{applied}]  {p['company']} — {p['title']}")
+    print()
+
+    # Send reminder email via EmailNotifier if configured
+    for n in getattr(notifier, "_notifiers", [notifier]):
+        if hasattr(n, "notify_followup"):
+            n.notify_followup(pending)
+            return
+    log.warning("No email notifier configured — printed to terminal only.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="job-radar",
@@ -894,6 +929,8 @@ def build_parser() -> argparse.ArgumentParser:
     fg.add_argument("--interested", metavar="JOB_URL_OR_KEY", help="Mark a job as interesting (bookmarked for later).")
     fg.add_argument("--feedback", action="store_true", help="Print a summary of all recorded feedback and exit.")
     fg.add_argument("--dashboard", action="store_true", help="Open the local feedback dashboard in your browser (http://localhost:5100).")
+    fg.add_argument("--followup", action="store_true", help="Send a follow-up reminder email for jobs applied 7+ days ago with no response.")
+    fg.add_argument("--followed-up", metavar="JOB_URL_OR_KEY", help="Mark a job as followed-up (removes it from future follow-up reminders).")
 
     # Boards options
     bg = p.add_argument_group("Boards mode options")
@@ -943,6 +980,14 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         if args.interested:
             run_record_feedback(db=db, identifier=args.interested, action="interested")
+            return
+
+        if getattr(args, "followed_up", None):
+            run_record_feedback(db=db, identifier=args.followed_up, action="followed_up")
+            return
+
+        if getattr(args, "followup", False):
+            run_followup_reminder(db=db, notifier=notifier)
             return
 
         if args.mode == "main":

@@ -153,6 +153,32 @@ _HTML_TEMPLATE = """\
                   text-decoration: none; font-weight: 700; font-size: 14px;
                   padding: 9px 22px; border-radius: 6px; margin-top: 10px;
                   letter-spacing: 0.02em; }}
+  /* Ghost warning banners */
+  .ghost-suspicious {{ background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px;
+                        padding: 6px 10px; margin-bottom: 8px; font-size: 12px; color: #dc2626; }}
+  .ghost-caution    {{ background: #fffbeb; border: 1px solid #fcd34d; border-radius: 4px;
+                        padding: 6px 10px; margin-bottom: 8px; font-size: 12px; color: #92400e; }}
+  /* Resume highlights */
+  .highlights-box  {{ background: #f0fdf4; border-left: 3px solid #16a34a;
+                       padding: 8px 12px; margin: 10px 0 6px; border-radius: 0 4px 4px 0; }}
+  .highlights-title {{ font-size: 11px; font-weight: 700; color: #15803d;
+                        text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 4px; }}
+  .highlights-box ul {{ margin: 0; padding-left: 16px; }}
+  .highlights-box li {{ font-size: 12px; color: #374151; margin-bottom: 3px; }}
+  /* LinkedIn DM box */
+  .dm-box   {{ background: #eff6ff; border-left: 3px solid #3b82f6;
+               padding: 8px 12px; margin: 6px 0 10px; border-radius: 0 4px 4px 0; }}
+  .dm-title {{ font-size: 11px; font-weight: 700; color: #1d4ed8;
+               text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 4px; }}
+  .dm-text  {{ font-size: 12px; color: #1e3a5f; margin: 0; line-height: 1.5; }}
+  /* Follow-up email styles */
+  .fu-card  {{ background: #fafafa; border-left: 4px solid #f59e0b;
+               border-radius: 6px; padding: 14px 16px; margin-bottom: 12px; }}
+  .fu-title {{ font-size: 15px; font-weight: 600; margin: 0 0 4px; color: #111; }}
+  .fu-meta  {{ font-size: 13px; color: #666; margin: 0 0 8px; }}
+  .fu-template {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 4px;
+                   padding: 10px 12px; margin-top: 8px; font-size: 12px;
+                   color: #374151; white-space: pre-wrap; line-height: 1.6; }}
   .footer {{ background: #f9f9f9; border-top: 1px solid #eee;
              padding: 14px 28px; font-size: 12px; color: #888; }}
   .stats {{ display: flex; gap: 20px; margin-bottom: 16px; }}
@@ -188,11 +214,14 @@ _HTML_TEMPLATE = """\
 
 _JOB_CARD = """\
 <div class="job-card job-card-{label}">
+  {ghost_banner}
   <p style="margin:0 0 6px;">{freshness_badge}</p>
   <p class="job-title">{company} &mdash; {title}
     <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}{match_badge}
   </p>
   <p class="job-meta">{location} &middot; {posted_friendly}{salary_line}</p>
+  {highlights_section}
+  {dm_section}
   <a class="apply-btn" href="{url}" target="_blank">&#9889; APPLY NOW &rarr;</a>
 </div>"""
 
@@ -208,9 +237,11 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
     profile_line = profile_summary_html()
 
     def _card(job: Job) -> str:
+        import html as _html
         # Freshness
         freshness_badge = _freshness_badge_html(job.posted)
-        posted_str = _posted_friendly(job.posted)
+        posted_str      = _posted_friendly(job.posted)
+
         # Work-type badge
         wt = (job.work_type or "").strip()
         if wt == "Remote":
@@ -221,6 +252,7 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             work_type_badge = '<span class="badge-onsite">&#127970; Onsite</span>'
         else:
             work_type_badge = ""
+
         # Resume match badge
         rm = getattr(job, "resume_match", 0)
         if rm >= 70:
@@ -231,22 +263,72 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             match_badge = f'<span class="badge-match" style="background:#f3f4f6;color:#6b7280;">{rm}% match</span>'
         else:
             match_badge = ""
+
         # Salary line
         salary_line = (
             f' &middot; <span class="salary-line">&#128176; {job.salary}</span>'
             if job.salary else ""
         )
+
+        # Ghost warning banner
+        ghost_level   = getattr(job, "ghost_level",   "")
+        ghost_reasons = getattr(job, "ghost_reasons",  [])
+        if ghost_level == "suspicious":
+            reasons_text = " &bull; ".join(_html.escape(r) for r in ghost_reasons)
+            ghost_banner = (
+                f'<div class="ghost-suspicious">&#9888; <strong>Suspicious posting</strong> — '
+                f'{reasons_text}</div>'
+            )
+        elif ghost_level == "caution":
+            reasons_text = " &bull; ".join(_html.escape(r) for r in ghost_reasons)
+            ghost_banner = (
+                f'<div class="ghost-caution">&#128993; <strong>Caution</strong> — '
+                f'{reasons_text}</div>'
+            )
+        else:
+            ghost_banner = ""
+
+        # Resume highlights — "lead with these on your application"
+        bullets = getattr(job, "top_bullets", [])
+        if bullets:
+            items = "\n    ".join(
+                f"<li>{_html.escape(b)}</li>" for b in bullets
+            )
+            highlights_section = (
+                '<div class="highlights-box">'
+                '<p class="highlights-title">&#128204; Lead with these on your application</p>'
+                f'<ul>\n    {items}\n  </ul>'
+                '</div>'
+            )
+        else:
+            highlights_section = ""
+
+        # LinkedIn DM — ready to copy
+        dm = getattr(job, "linkedin_dm", "")
+        if dm and job.label == "yes":  # only for strong matches
+            dm_section = (
+                '<div class="dm-box">'
+                '<p class="dm-title">&#128172; LinkedIn DM &mdash; copy &amp; send</p>'
+                f'<p class="dm-text">{_html.escape(dm)}</p>'
+                '</div>'
+            )
+        else:
+            dm_section = ""
+
         return _JOB_CARD.format(
             label=job.label,
-            company=job.company,
-            title=job.title,
+            company=_html.escape(job.company),
+            title=_html.escape(job.title),
             score=job.score,
-            location=job.location,
+            location=_html.escape(job.location),
             freshness_badge=freshness_badge,
             posted_friendly=posted_str,
             salary_line=salary_line,
             work_type_badge=work_type_badge,
             match_badge=match_badge,
+            ghost_banner=ghost_banner,
+            highlights_section=highlights_section,
+            dm_section=dm_section,
             url=job.url,
         )
 
@@ -280,6 +362,80 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
         yes_section=yes_section, maybe_section=maybe_section,
         error_section=error_section,
     )
+
+
+def _build_followup_html(pending: list[dict]) -> str:
+    """Build an HTML reminder email for jobs applied to but not followed up on."""
+    import html as _html
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    cards = []
+    for p in pending:
+        company   = _html.escape(p.get("company", ""))
+        title     = _html.escape(p.get("title", ""))
+        url       = p.get("url", "#")
+        location  = _html.escape(p.get("location", ""))
+        wt        = _html.escape(p.get("work_type", ""))
+        applied   = p.get("applied_at", "")
+        h_ago     = _hours_ago(applied)
+        days_ago  = int(h_ago / 24) if h_ago else 0
+        applied_friendly = f"{days_ago} days ago" if days_ago else applied[:10]
+        follow_msg = (
+            f"Hi [Hiring Manager],\n\n"
+            f"I wanted to follow up on my application for the {p.get('title','')} "
+            f"position at {p.get('company','')}.\n\n"
+            f"I remain very interested in this role and would love to discuss how my "
+            f"experience in data analytics and business intelligence can contribute "
+            f"to your team.\n\n"
+            f"Please let me know if you need any additional information.\n\n"
+            f"Best regards,\nRohith Bayya"
+        )
+        wt_str = f" &middot; {wt}" if wt else ""
+        cards.append(
+            f'<div class="fu-card">'
+            f'<p class="fu-title">{company} &mdash; {title}</p>'
+            f'<p class="fu-meta">{location}{wt_str} &middot; Applied <strong>{applied_friendly}</strong></p>'
+            f'<a href="{url}" target="_blank" style="font-size:13px;color:#1d4ed8;">View Posting &rarr;</a>'
+            f'<p class="fu-template">{_html.escape(follow_msg)}</p>'
+            f'</div>'
+        )
+    cards_html = "\n".join(cards)
+    return f"""\
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+          background:#f5f5f5; margin:0; padding:20px; color:#333; }}
+  .container {{ max-width:700px; margin:0 auto; background:#fff;
+                border-radius:8px; overflow:hidden;
+                box-shadow:0 2px 8px rgba(0,0,0,0.1); }}
+  .header {{ background:#92400e; color:#fff; padding:20px 28px; }}
+  .header h1 {{ margin:0; font-size:20px; }}
+  .header p  {{ margin:4px 0 0; font-size:13px; color:#fde68a; }}
+  .section {{ padding:20px 28px; }}
+  .fu-card {{ background:#fafafa; border-left:4px solid #f59e0b;
+              border-radius:6px; padding:14px 16px; margin-bottom:14px; }}
+  .fu-title {{ font-size:15px; font-weight:600; margin:0 0 4px; }}
+  .fu-meta  {{ font-size:13px; color:#666; margin:0 0 8px; }}
+  .fu-template {{ background:#fff; border:1px solid #e5e7eb; border-radius:4px;
+                   padding:10px 12px; margin-top:8px; font-size:12px;
+                   color:#374151; white-space:pre-wrap; line-height:1.6; }}
+  .footer {{ background:#f9f9f9; border-top:1px solid #eee;
+             padding:14px 28px; font-size:12px; color:#888; }}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>&#9200; Follow-up Reminders</h1>
+    <p>{now_str} &mdash; {len(pending)} application(s) waiting for a follow-up</p>
+  </div>
+  <div class="section">
+    <p style="font-size:14px;color:#374151;margin:0 0 16px;">
+      You applied to these roles <strong>7+ days ago</strong> with no response recorded.
+      A brief follow-up email can move you to the top of the pile. Copy the template below each listing.
+    </p>
+    {cards_html}
+  </div>
+  <div class="footer">Job Radar &mdash; Follow-up Reminder &mdash; Mark a job as
+    <code>--followed-up</code> to stop seeing it here.</div>
+</div></body></html>"""
 
 
 def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job], source_errors: list[str] | None = None) -> str:
@@ -389,6 +545,50 @@ class EmailNotifier(BaseNotifier):
                 server.sendmail(self.user, self.recipients, msg.as_string())
 
         log.info("Email sent: %d yes + %d maybe to %s", len(yes_jobs), len(maybe_jobs), ", ".join(self.recipients))
+
+    def notify_followup(self, pending: list[dict]) -> None:
+        """Send a weekly follow-up reminder email for stale applications."""
+        if not self.is_configured():
+            log.warning("Email not configured; skipping follow-up reminder.")
+            return
+        if not pending:
+            log.info("No follow-ups due — nothing to send.")
+            return
+
+        subject = (
+            f"⏰ Follow-up reminder — {len(pending)} application"
+            f"{'s' if len(pending) > 1 else ''} waiting for a response"
+        )
+        html_body = _build_followup_html(pending)
+        text_body = "\n".join(
+            f"[{p['company']}] {p['title']} — applied {p.get('applied_at','')[:10]}  {p['url']}"
+            for p in pending
+        )
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = self.user
+        msg["To"]      = ", ".join(self.recipients)
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+        try:
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ctx = ssl.create_default_context()
+
+        if self.smtp_port == 465:
+            with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, context=ctx) as server:
+                server.login(self.user, self.password)
+                server.sendmail(self.user, self.recipients, msg.as_string())
+        else:
+            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                server.ehlo(); server.starttls(context=ctx); server.ehlo()
+                server.login(self.user, self.password)
+                server.sendmail(self.user, self.recipients, msg.as_string())
+
+        log.info("Follow-up reminder sent: %d application(s) to %s", len(pending), ", ".join(self.recipients))
 
 
 # ---------------------------------------------------------------------------
