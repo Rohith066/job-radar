@@ -1,0 +1,51 @@
+ROHITH BAYYA
+New York, NY | rohithbr6@gmail.com
+LLM Systems • Retrieval Engineering • Applied AI
+
+SUMMARY
+Engineer focused on LLM systems and retrieval — turning unstructured documents and analytical questions into grounded, useful answers. Background combines two years of production SQL and data pipeline work with a year of hands-on building RAG, Text2SQL, and multi-agent LLM applications. Strongest where data engineering meets applied AI: ingestion, retrieval, orchestration, and evaluation.
+
+TECHNICAL SKILLS
+Core: Python, SQL, PyTorch, Scikit-learn, Pandas, NumPy
+LLM Systems: LangChain, OpenAI and Anthropic APIs, Hugging Face Transformers, Ollama, prompt engineering, function calling, multi-agent routing, Text2SQL
+Retrieval: FAISS, semantic search, embedding generation, top-k and MMR retrieval, recursive text splitting, metadata filtering, PyMuPDF
+Data Infrastructure: Airflow, dbt, Snowflake, DuckDB, AWS S3, Delta Lake, ETL, schema validation
+ML & Analytics: ARIMA, K-means, time series, MLflow, feature engineering
+Tooling: Docker, Git, Streamlit, Linux
+
+EDUCATION
+M.S. Data Analytics Engineering | George Mason University, Fairfax, VA | 2025
+Coursework: Machine Learning, Statistical Learning, NLP, Big Data Analytics, Data Mining, Time Series Analysis
+B.Tech Computer Science | Neil Gogte Institute of Technology, India | 2021
+
+EXPERIENCE
+
+Data & AI Engineer (Co-op) | SciEncephalon | Remote | Jan 2025 – Dec 2025
+• Built Python document ingestion workflows for internal AI initiatives — text extraction, schema normalization, business-rule transformations, structured output.
+• Contributed chunking, embedding, and retrieval components to internal document-intelligence tooling supporting natural-language search over enterprise documents.
+• Added per-stage logging, validation checks, and anomaly monitoring to catch data-quality issues earlier and improve pipeline auditability.
+• Built a Streamlit interface letting non-technical stakeholders query and monitor processed pipeline outputs without analyst support.
+
+Data Analyst | XIT Solutions | Hyderabad, India | Jan 2022 – Dec 2023
+• Built SQL pipelines over 10M+ financial records using window functions, stored procedures, and materialized views for Finance, Risk, and Compliance reporting.
+• Optimized 12+ SQL queries and reports, reducing dashboard load times by ~45%.
+• Engineered a KPI governance and data-quality framework adopted as the metrics standard across 3 business units and 50+ downstream reports.
+• Automated 15+ recurring reporting workflows; built ARIMA forecasts (8-12% MAPE) and K-means segmentation across 200+ client accounts.
+
+PROJECTS
+
+ClimateGPT Fusion – Multi-Agent LLM System over Climate Data | Python, GPT-4, Claude API, LangChain, Text2SQL, DuckDB
+• Designed a routing layer that classifies incoming questions and dispatches them to one of three handlers: RAG over unstructured documents, Text2SQL over DuckDB tables, or direct LLM answering.
+• Implemented function-calling schemas for tool selection across GPT-4 and Claude APIs, allowing the system to choose model and tool per query type.
+• Built a Text2SQL workflow that injects schema context into prompts and validates generated SQL before execution against DuckDB.
+• Designed an evaluation harness that runs the same query set across model and prompt versions, comparing response quality, latency, and grounded-vs-hallucinated answers side by side.
+
+Internal Knowledge Assistant – RAG Pipeline with LangChain & FAISS | Python, LangChain, FAISS, Streamlit, OpenAI/HF Embeddings, PyMuPDF
+• Built an end-to-end RAG pipeline ingesting 500+ documents (~8,000 pages) into ~35,000 chunks indexed in FAISS.
+• Implemented recursive character splitting (chunk size ~500 tokens, ~50 token overlap) and compared OpenAI vs. Hugging Face sentence-transformer embeddings on a held-out query set.
+• Designed source-grounded Q&A using top-k FAISS retrieval and metadata filtering, with LLM answers constrained to retrieved context and inline citations on every response.
+• Deployed via Streamlit with document upload, conversational Q&A, and citation display.
+
+ADDITIONAL PROJECTS
+• Local AI Research Assistant — Privacy-first RAG running fully local Mistral / LLaMA via Ollama with FAISS retrieval; no cloud API dependency.
+• Cloud-Native Analytics Lakehouse — Medallion platform on AWS S3, PySpark, Snowflake, dbt, Airflow, Delta Lake, MLflow.

@@ -1,111 +1,100 @@
 """Candidate profile — Rohith Bayya.
 
-Used to:
-  1. Compute a skill-match bonus on top of the title score
-  2. Inject personalised context into email / Slack notifications
-  3. Serve as a single source of truth for target role configuration
-
-No external dependencies — pure Python dicts & sets.
+Dual-track job search:
+  Track A — Analytics & Platform Data Engineering (dbt, Airflow, Snowflake, PySpark)
+  Track B — LLM / Retrieval / Applied AI Engineering (RAG, FAISS, LangChain, Text2SQL)
 """
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Core profile
-# ---------------------------------------------------------------------------
 PROFILE = {
     "name": "Rohith Bayya",
     "email": "rohithbr6@gmail.com",
-    "location": "Fairfax, VA",
+    "location": "New York, NY",
     "experience_years": 3,
     "education": "M.S. Data Analytics Engineering — George Mason University (2025)",
     "target_roles": [
-        "Data Analyst",
+        # Track A — Data Engineering
         "Analytics Engineer",
-        "Business Intelligence Analyst",
-        "Business Intelligence Engineer",
-        "Commercial Analyst",
-        "Revenue Analyst",
-        "Financial Analyst",
-        "Reporting Analyst",
-        "Product Analyst",
         "Data Engineer",
-        "Data Warehouse Engineer",
+        "Platform Data Engineer",
+        "dbt Engineer",
+        # Track B — AI Engineering
+        "LLM Engineer",
+        "AI Engineer",
+        "Retrieval Engineer",
+        "Applied AI Engineer",
+        # Secondary
+        "Data Analyst",
+        "ML Engineer",
     ],
+    "tracks": {
+        "de": "Analytics & Platform Data Engineering",
+        "ai": "LLM / Retrieval / Applied AI Engineering",
+    },
 }
 
 # ---------------------------------------------------------------------------
 # Skill sets — used for keyword-based bonus scoring
 # ---------------------------------------------------------------------------
 
-# Primary tools: direct experience
+# Track A — Data Engineering skills (direct project + work experience)
 SKILLS_STRONG: set[str] = {
-    "sql", "python", "r",
-    "power bi", "dax",
+    # Core languages
+    "python", "sql", "pyspark", "bash",
+    # Orchestration & transformation
+    "airflow", "dbt", "dbt cloud",
+    # Warehousing & storage
+    "snowflake", "aws s3", "delta lake", "duckdb", "medallion",
+    "data lakehouse", "data lake", "data warehouse",
+    # SQL techniques
+    "window functions", "stored procedures", "materialized views", "cte", "query optimization",
+    # Data quality
+    "data quality", "schema validation", "data lineage", "kpi governance",
+    "anomaly detection", "data contracts",
+    # Analytics / ML
+    "mlflow", "arima", "k-means", "feature pipeline",
     "pandas", "numpy", "scikit-learn", "sklearn",
-    "azure", "azure sql", "azure data lake",
-    "aws", "s3", "redshift",
-    "snowflake",
-    "pyspark", "spark", "databricks",
-    "plotly", "streamlit",
-    "arima", "forecasting",
+    # Tooling
+    "docker", "git", "streamlit", "jupyter",
     "etl", "elt", "pipeline",
-    "docker", "git",
-    "duckdb",
-    "tableau",
-    "sql server", "t-sql",
-    "logistic regression", "regression",
-    "k-means", "clustering",
-    "classification",
-    "data warehouse", "dwh",
-    "data modeling",
-    # Moved from moderate — have project evidence for both
-    "dbt",
-    "airflow",
-    # Commercial analytics signals — core to target roles
-    "data lineage",
-    "data governance",
-    "kpi",
-    "a/b test",
-    "experimentation",
-    "financial analytics",
+    # Track B — AI / LLM Engineering (hands-on project experience)
+    "langchain", "faiss", "rag", "llm",
+    "openai", "anthropic", "hugging face", "transformers",
+    "text2sql", "embedding", "semantic search",
+    "multi-agent", "function calling", "prompt engineering",
+    "retrieval augmented generation", "vector search",
+    "ollama", "mistral", "llama",
+    "pymupdf", "chunking", "metadata filtering",
+    "pytorch", "torch",
 }
 
-# Familiar / secondary exposure
+# Secondary / familiar tools
 SKILLS_MODERATE: set[str] = {
-    "kafka",
-    "hadoop",
-    "flink",
-    "bigquery",
-    "looker",
-    "qlik",
+    "kafka", "hadoop", "flink", "spark",
+    "bigquery", "redshift", "azure",
+    "tableau", "power bi", "looker",
+    "databricks",
+    "mysql", "postgresql", "postgres",
+    "docker", "kubernetes",
     "excel",
-    "power query",
-    "gcp",
-    "google cloud",
-    "mysql",
-    "postgresql",
-    "postgres",
-    "metabase",
-    "mixpanel",
-    "segment",
-    "amplitude",
+    "a/b test", "experimentation",
+    "classification", "regression", "clustering",
+    "time series",
+    "aws", "gcp", "google cloud",
+    "pinecone", "weaviate", "chroma",   # vector DBs
+    "langsmith", "weights & biases", "mlops",
 }
 
 # ---------------------------------------------------------------------------
 # Skill-match bonus scorer
 # ---------------------------------------------------------------------------
 
-_STRONG_BONUS = 8    # points per strong skill found in job text
-_MODERATE_BONUS = 3  # points per moderate skill found
+_STRONG_BONUS = 8
+_MODERATE_BONUS = 3
 
 
 def skill_bonus(text: str, cap: int = 20) -> int:
-    """Return a skill-match bonus (0–cap) based on skills found in `text`.
-
-    Intended for job titles or any available job text. In practice, most
-    job boards only expose titles/locations, so the bonus is mainly useful
-    when description text is available.
-    """
+    """Return a skill-match bonus (0–cap) based on skills found in `text`."""
     t = (text or "").lower()
     bonus = 0
     for skill in SKILLS_STRONG:
@@ -122,15 +111,16 @@ def skill_bonus(text: str, cap: int = 20) -> int:
 # ---------------------------------------------------------------------------
 
 def profile_summary_html() -> str:
+    tracks = " &bull; ".join(PROFILE["tracks"].values())
     return (
         f"<p style='font-size:12px;color:#666;margin:0 0 8px'>"
         f"Matched for <strong>{PROFILE['name']}</strong> — "
-        f"targeting <em>{', '.join(PROFILE['target_roles'][:4])}…</em></p>"
+        f"<em>{tracks}</em></p>"
     )
 
 
 def profile_summary_text() -> str:
     return (
         f"Profile: {PROFILE['name']} | "
-        f"Target: {', '.join(PROFILE['target_roles'][:3])}…"
+        f"Tracks: {' | '.join(PROFILE['tracks'].values())}"
     )

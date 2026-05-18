@@ -1,0 +1,50 @@
+ROHITH BAYYA
+New York, NY | rohithbr6@gmail.com
+Analytics & Platform Data Engineering
+
+SUMMARY
+Analytics-leaning data engineer targeting analytics engineering and platform data engineering roles. Two years of production SQL pipeline work for Finance and Risk reporting, plus a Master's project building a medallion-style lakehouse on AWS, PySpark, Snowflake, dbt, and Airflow. Strongest at the model-and-orchestration layer — clean dbt models, tested transformations, and reliable scheduled pipelines.
+
+TECHNICAL SKILLS
+Core: Python, SQL, PySpark, Bash, Git, Linux
+Orchestration: Airflow (DAGs, sensors, operators), dbt Cloud (models, tests, snapshots)
+Warehousing & Storage: Snowflake, AWS S3, Delta Lake, DuckDB, medallion architecture, partitioning, clustering
+SQL & Performance: Window functions, stored procedures, materialized views, CTEs, query optimization
+Data Quality: Schema validation, dbt tests, anomaly detection, field-level lineage, KPI governance
+Analytics Support: MLflow, ARIMA, K-means, feature pipelines
+Tooling: Docker, Streamlit, Jupyter, Pandas, NumPy
+
+EDUCATION
+M.S. Data Analytics Engineering | George Mason University, Fairfax, VA | 2025
+Coursework: Big Data Analytics, Data Mining, Time Series Analysis, Machine Learning, Statistical Learning
+B.Tech Computer Science | Neil Gogte Institute of Technology, India | 2021
+
+EXPERIENCE
+
+Data & AI Engineer (Co-op) | SciEncephalon | Remote | Jan 2025 – Dec 2025
+• Developed Python document ingestion and ETL workflows — text extraction, schema normalization, business-rule transformations, structured output for downstream analytics.
+• Added per-stage logging, validation checks, and anomaly monitoring to catch data-quality issues earlier and improve pipeline auditability.
+• Maintained reference tables documenting source fields, transformation mappings, and output schemas for reliable downstream workflows.
+• Built a Streamlit interface letting non-technical stakeholders query and monitor processed pipeline outputs without analyst support.
+
+Data Analyst | XIT Solutions | Hyderabad, India | Jan 2022 – Dec 2023
+• Built SQL pipelines over 10M+ financial records using window functions, stored procedures, materialized views, and query optimization for Finance, Risk, and Compliance reporting.
+• Optimized 12+ SQL queries and reporting workflows, reducing dashboard and report load times by ~45%.
+• Engineered a KPI governance and data-quality framework with field-level lineage and automated validation, adopted as the metrics standard across 3 business units and 50+ downstream reports.
+• Automated 15+ recurring reporting workflows, reducing manual effort and improving turnaround.
+• Built ARIMA forecasts (8-12% MAPE) and K-means segmentation across 200+ client accounts for business planning.
+
+PROJECTS
+
+Cloud-Native Analytics Lakehouse – End-to-End Data Platform | AWS S3, PySpark, Snowflake, dbt, Airflow, Delta Lake, MLflow, Docker
+• Built an end-to-end medallion lakehouse on AWS S3, PySpark, Snowflake, dbt, and Airflow with clearly separated bronze, silver, and gold zones.
+• Wrote dbt models with tests and snapshots to enforce data contracts; orchestrated transformations via Airflow DAGs with explicit task dependencies.
+• Tuned PySpark jobs and Snowflake queries (partitioning, clustering, materialized views) for faster gold-layer reads.
+• Tracked ML experiments with MLflow and containerized the stack with Docker for reproducible runs.
+
+ClimateGPT Fusion – Natural-Language Analytics over DuckDB | Python, DuckDB, Text2SQL, LangChain
+• Built a Text2SQL layer translating natural-language analytical questions into DuckDB queries over climate datasets.
+• Designed an evaluation harness comparing SQL correctness and response quality across prompt and model versions.
+
+ADDITIONAL PROJECTS
+• Internal Knowledge Assistant — Document ingestion and search pipeline over 500+ docs / ~8,000 pages with FAISS-indexed embeddings.

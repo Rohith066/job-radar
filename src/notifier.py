@@ -253,14 +253,17 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
         else:
             work_type_badge = ""
 
-        # Resume match badge
-        rm = getattr(job, "resume_match", 0)
+        # Resume match badge + track indicator
+        rm    = getattr(job, "resume_match", 0)
+        track = getattr(job, "resume_track", "")
+        track_label = {"de": "DE resume", "ai": "AI resume"}.get(track, "")
+        track_suffix = f" · {track_label}" if track_label else ""
         if rm >= 70:
-            match_badge = f'<span class="badge-match">&#9989; {rm}% match</span>'
+            match_badge = f'<span class="badge-match">&#9989; {rm}%{track_suffix}</span>'
         elif rm >= 45:
-            match_badge = f'<span class="badge-match" style="background:#fef9c3;color:#a16207;">&#128993; {rm}% match</span>'
+            match_badge = f'<span class="badge-match" style="background:#fef9c3;color:#a16207;">&#128993; {rm}%{track_suffix}</span>'
         elif rm > 0:
-            match_badge = f'<span class="badge-match" style="background:#f3f4f6;color:#6b7280;">{rm}% match</span>'
+            match_badge = f'<span class="badge-match" style="background:#f3f4f6;color:#6b7280;">{rm}%{track_suffix}</span>'
         else:
             match_badge = ""
 

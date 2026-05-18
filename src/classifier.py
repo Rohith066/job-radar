@@ -1,10 +1,16 @@
-"""Data-domain job title classifier — tuned for commercial analytics roles.
+"""Job title classifier — dual-track: Data Engineering + AI Engineering.
 
-Scoring tiers:
-  Tier 1 (score 92) — core sweet spot: Data Analyst, BI Analyst, Analytics Engineer
-  Tier 2 (score 78) — strong fit: Data Engineer, Product Analyst, ETL/Warehouse roles
-  Tier 3 (score 55) — review manually: Data Scientist, Quant Analyst, Business Analyst
-  Tier 4 (score  0) — profile mismatch: ML Engineer, LLM Engineer, Applied Scientist, etc.
+Rohith is now targeting TWO tracks simultaneously:
+  Track A — Analytics / Platform Data Engineering
+             (dbt, Airflow, Snowflake, PySpark, medallion lakehouse)
+  Track B — LLM / Retrieval / Applied AI Engineering
+             (RAG, FAISS, LangChain, Text2SQL, multi-agent systems)
+
+Scoring tiers (both tracks share the same thresholds):
+  Tier 1 (score 92) — primary targets for either track
+  Tier 2 (score 78) — strong secondary fit
+  Tier 3 (score 55) — worth reviewing manually
+  Tier 4 (score  0) — PROFILE_MISMATCH: pure non-data roles, never alert
 
 Labels:
   yes   (score 70–100) — alert immediately
@@ -17,116 +23,146 @@ import re
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
-# Tier 1 — Core sweet spot  →  score 92
+# Tier 1 — Primary targets  →  score 92
 # ---------------------------------------------------------------------------
-TIER_1_ROLES = [
+
+# Track A: Analytics & Platform Data Engineering
+TIER_1_DE: list[str] = [
+    "analytics engineer",
+    "analytics engineering",
+    "data engineer",
+    "data engineering",
+    "platform data engineer",
+    "dbt engineer",
+    "dbt developer",
+    "dbt analyst",
+    "data platform engineer",
+    "etl engineer",
+    "etl developer",
+    "elt engineer",
+    "data pipeline engineer",
+    "data infrastructure engineer",
+    "data reliability engineer",
+    "data warehouse engineer",
+    "data warehousing engineer",
+    "dwh engineer",
+    "data modeler",
+    "data modeling engineer",
+    "data architect",
+    "analytics architect",
+]
+
+# Track B: LLM / Retrieval / Applied AI Engineering
+TIER_1_AI: list[str] = [
+    "llm engineer",
+    "llm developer",
+    "ai engineer",
+    "applied ai engineer",
+    "generative ai engineer",
+    "gen ai engineer",
+    "retrieval engineer",
+    "rag engineer",
+    "nlp engineer",
+    "conversational ai engineer",
+    "foundation model engineer",
+    "ai data engineer",
+    "prompt engineer",
+    "ai/ml engineer",
+    "ml systems engineer",
+    "ai systems engineer",
+    "llm systems engineer",
+    "ai platform engineer",
+    "machine learning platform engineer",
+]
+
+TIER_1_ROLES: list[str] = TIER_1_DE + TIER_1_AI
+
+# ---------------------------------------------------------------------------
+# Tier 2 — Strong secondary fit  →  score 78
+# ---------------------------------------------------------------------------
+TIER_2_ROLES: list[str] = [
+    # Data analysis & BI — valid with DE background
     "data analyst",
     "data analytics",
-    "analytics engineer",
-    "analytics analyst",
     "business intelligence analyst",
     "bi analyst",
     "business intelligence engineer",
     "bi engineer",
     "bi developer",
-    "intelligence analyst",
-    "commercial analyst",
-    "revenue analyst",
-    "financial analyst",
-    "reporting analyst",
+    "analytics analyst",
     "insights analyst",
-    "decision science analyst",
+    "reporting analyst",
+    # ML / AI adjacent
+    "machine learning engineer",
+    "ml engineer",
+    "applied scientist",
+    "data scientist",
+    "data science",
+    "mlops engineer",
+    "ml platform engineer",
+    # Data ops / quality
+    "data quality engineer",
     "data governance",
     "data quality analyst",
-    "data quality engineer",
-    "data management analyst",
     "data operations analyst",
+    "data management analyst",
     "data steward",
     "data catalog",
-]
-
-# ---------------------------------------------------------------------------
-# Tier 2 — Strong fit, slightly off-centre  →  score 78
-# ---------------------------------------------------------------------------
-TIER_2_ROLES = [
-    "data engineer",
-    "data engineering",
+    "data reliability",
+    # Analytics roles
     "product analyst",
     "growth analyst",
     "marketing analyst",
     "operations analyst",
-    "data warehouse engineer",
-    "data warehousing",
-    "dwh engineer",
-    "etl engineer",
-    "etl developer",
-    "elt engineer",
-    "data modeler",
-    "data modeling",
-    "data platform engineer",
-    "data infrastructure engineer",
-    "data reliability engineer",
-    "data architect",
-    "analytics architect",
+    "commercial analyst",
+    "revenue analyst",
+    "financial analyst",
+    "decision science analyst",
+    # Data platform / infrastructure
     "data platform",
     "data infrastructure",
-    "analytics consultant",
     "data consultant",
-    "data advisor",
+    "analytics consultant",
     "insights engineer",
-    "clinical data analyst",
 ]
 
 # ---------------------------------------------------------------------------
 # Tier 3 — Visible but review manually  →  score 55
 # ---------------------------------------------------------------------------
-TIER_3_ROLES = [
-    "data scientist",
-    "data science",
+TIER_3_ROLES: list[str] = [
+    "business analyst",
+    "research scientist",
+    "research engineer",
     "decision scientist",
     "quantitative analyst",
     "quant analyst",
     "statistical analyst",
-    "statistical modeler",
     "forecasting analyst",
-    "research analyst",
-    "business analyst",
-    "operations research",
     "ai analyst",
     "ai scientist",
+    "operations research",
+    "clinical data analyst",
 ]
 
 # ---------------------------------------------------------------------------
-# Tier 4 — NOT your profile  →  score 0, never alert
+# Tier 4 — Genuinely NOT the profile  →  score 0, never alert
+# Pure non-data roles only — LLM/AI/ML have been MOVED to Tier 1/2
 # ---------------------------------------------------------------------------
-PROFILE_MISMATCH = [
-    "machine learning engineer",
-    "ml engineer",
-    "mlops engineer",
-    "ml platform engineer",
-    "applied scientist",
-    "research scientist",
-    "ai engineer",
-    "llm engineer",
-    "llm data",
-    "prompt engineer",
-    "generative ai engineer",
-    "gen ai engineer",
-    "nlp engineer",
-    "natural language processing engineer",
-    "natural language processing scientist",
+PROFILE_MISMATCH: list[str] = [
     "computer vision engineer",
     "computer vision scientist",
-    "multimodal",
-    "foundation model",
-    "feature engineer",
-    "ai data",
+    "robotics engineer",
+    "hardware engineer",
+    "embedded engineer",
+    "electrical engineer",
+    "mechanical engineer",
+    # Note: LLM/AI/ML roles are now Tier 1/2 — do NOT add them back here
 ]
 
 # ---------------------------------------------------------------------------
 # Weak data signals — score 40 (borderline maybe)
 # ---------------------------------------------------------------------------
-DATA_WEAK = [
+DATA_WEAK: list[str] = [
     "analytics",
     "data",
     "intelligence",
@@ -150,17 +186,23 @@ DATA_WEAK = [
     "large language model",
     "llm",
     "nlp",
-    "business intelligence analyst",
+    "retrieval",
+    "embedding",
+    "vector",
+    "rag",
+    "langchain",
+    "openai",
+    "anthropic",
 ]
 
-# Keep DATA_STRONG as an alias so any external imports don't break
+# Keep alias so any external imports don't break
 DATA_STRONG = TIER_1_ROLES + TIER_2_ROLES
 
 # ---------------------------------------------------------------------------
 # Hard excludes — non-data roles → immediate "no"
 # ---------------------------------------------------------------------------
-HARD_EXCLUDES = [
-    # Pure software engineering (no data modifier)
+HARD_EXCLUDES: list[str] = [
+    # Pure software engineering (no data / AI modifier)
     "software engineer",
     "software developer",
     "software development engineer",
@@ -176,15 +218,12 @@ HARD_EXCLUDES = [
     "mobile engineer",
     "ios engineer",
     "android engineer",
-    "embedded engineer",
     "embedded software",
     "systems engineer",
     "site reliability",
     "sre",
     "devops",
-    "platform engineer",
     "cloud engineer",
-    "infrastructure engineer",
     "network engineer",
     "security engineer",
     "cybersecurity",
@@ -222,15 +261,14 @@ HARD_EXCLUDES = [
     "systems administrator",
     "sysadmin",
     "database administrator",
-    # Hardware / non-software
-    "hardware engineer",
+    # Hardware / manufacturing
     "electrical engineer",
     "mechanical engineer",
     "manufacturing engineer",
     "supply chain",
 ]
 
-HARD_EXCLUDE_REGEXES = [
+HARD_EXCLUDE_REGEXES: list[str] = [
     r"\bintern(ship)?\b",
     r"\bco[- ]?op\b",
     r"\bcoop\b",
@@ -239,48 +277,32 @@ HARD_EXCLUDE_REGEXES = [
 ]
 
 # ---------------------------------------------------------------------------
-# Clearance / citizenship filters — ABSOLUTE, cannot be overridden.
-# Removes jobs that require security clearance or US citizenship.
+# Clearance / citizenship filters — ABSOLUTE, cannot be overridden
 # ---------------------------------------------------------------------------
-CLEARANCE_EXCLUDE_PHRASES = [
-    "security clearance",
-    "clearance required",
-    "clearance preferred",
-    "clearance eligible",
-    "active clearance",
-    "active secret",
-    "secret clearance",
-    "top secret",
-    "ts/sci",
-    "ts sci",
-    "sci clearance",
-    "dod clearance",
-    "dod secret",
-    "public trust",
-    "polygraph",
-    "us citizen",
-    "u.s. citizen",
-    "must be a citizen",
-    "citizenship required",
-    "citizenship eligibility",
-    "must hold clearance",
+CLEARANCE_EXCLUDE_PHRASES: list[str] = [
+    "security clearance", "clearance required", "clearance preferred",
+    "clearance eligible", "active clearance", "active secret",
+    "secret clearance", "top secret", "ts/sci", "ts sci", "sci clearance",
+    "dod clearance", "dod secret", "public trust", "polygraph",
+    "us citizen", "u.s. citizen", "must be a citizen",
+    "citizenship required", "citizenship eligibility", "must hold clearance",
 ]
 
-CLEARANCE_EXCLUDE_REGEXES = [
-    r"\bts[/\s\-]?sci\b",       # TS/SCI, TS SCI, TS-SCI
-    r"\btop\s+secret\b",         # Top Secret
-    r"\bpolygraph\b",            # Polygraph
-    r"\bpublic\s+trust\b",       # Public Trust
-    r"\bclearance\b",            # any "clearance" in title
-    r"\bus\s+citizen",           # US citizen / US citizenship
-    r"\bcitizenship\b",          # citizenship requirement
-    r"\bsci\b",                  # SCI in title (often paired with TS)
+CLEARANCE_EXCLUDE_REGEXES: list[str] = [
+    r"\bts[/\s\-]?sci\b",
+    r"\btop\s+secret\b",
+    r"\bpolygraph\b",
+    r"\bpublic\s+trust\b",
+    r"\bclearance\b",
+    r"\bus\s+citizen",
+    r"\bcitizenship\b",
+    r"\bsci\b",
 ]
 
 # ---------------------------------------------------------------------------
-# Seniority tokens — always clamp to "maybe" or "no"
+# Seniority tokens — clamp score into "maybe" or "no"
 # ---------------------------------------------------------------------------
-SENIORITY_TOKENS = [
+SENIORITY_TOKENS: list[str] = [
     "senior", "sr", "staff", "principal", "lead", "architect",
     "distinguished", "fellow", "director", "manager", "head of",
     "vp", "vice president",
@@ -288,10 +310,10 @@ SENIORITY_TOKENS = [
 VERY_SENIOR = frozenset(["director", "vp", "vice president", "head of", "fellow", "distinguished"])
 
 # ---------------------------------------------------------------------------
-# "data" safety-net: if the title contains "data" AND a hard-excluded term,
-# the "data" wins for these specific combos (e.g. "Data Security Analyst")
+# Safety-net overrides — "data" / "ai" / "llm" prefix rescues hard-excluded terms
 # ---------------------------------------------------------------------------
 DATA_SAFETY_NET_OVERRIDES = frozenset([
+    # Data + hard-excluded combos
     "data security analyst",
     "data quality engineer",
     "data governance",
@@ -303,16 +325,22 @@ DATA_SAFETY_NET_OVERRIDES = frozenset([
     "data platform",
     "data infrastructure",
     "data reliability engineer",
-    # Product/program roles that are genuinely data-focused
     "data product manager",
     "data program manager",
     "analytics program manager",
-    # AI roles that may hit SWE-adjacent hard-excludes
+    # AI / LLM + hard-excluded combos (AI roles that use "engineer" broadly)
+    "ai software engineer",
+    "llm software engineer",
+    "ml software engineer",
+    "ai platform engineer",
+    "ai systems engineer",
     "generative ai",
     "gen ai",
     "llm engineer",
+    "ai engineer",
     "prompt engineer",
     "ai data engineer",
+    "ml systems",
 ])
 
 
@@ -320,6 +348,7 @@ DATA_SAFETY_NET_OVERRIDES = frozenset([
 class ClassifyResult:
     score: int   # 0-100
     label: str   # "yes" | "maybe" | "no"
+    track: str   # "de" | "ai" | "analyst" | "other"
 
 
 def _norm(title: str) -> str:
@@ -328,55 +357,59 @@ def _norm(title: str) -> str:
 
 
 def classify(title: str) -> ClassifyResult:
-    """Score and label a job title for data-domain relevance."""
+    """Score and label a job title. Returns track so email can show which resume to use."""
     t = _norm(title)
     if not t:
-        return ClassifyResult(score=0, label="no")
+        return ClassifyResult(score=0, label="no", track="other")
 
-    # ── ABSOLUTE FILTER: security clearance / citizenship ──────────────────
-    # These are checked first and cannot be overridden by any safety-net.
+    # ── ABSOLUTE: clearance / citizenship ─────────────────────────────────────
     for phrase in CLEARANCE_EXCLUDE_PHRASES:
         if phrase in t:
-            return ClassifyResult(score=0, label="no")
+            return ClassifyResult(score=0, label="no", track="other")
     for pat in CLEARANCE_EXCLUDE_REGEXES:
         if re.search(pat, t):
-            return ClassifyResult(score=0, label="no")
-    # ───────────────────────────────────────────────────────────────────────
+            return ClassifyResult(score=0, label="no", track="other")
 
-    # ── PROFILE MISMATCH: ML/LLM/AI engineering roles — score 0, never alert ─
+    # ── PROFILE MISMATCH (pure non-data roles) ─────────────────────────────────
     for phrase in PROFILE_MISMATCH:
         if phrase in t:
-            return ClassifyResult(score=0, label="no")
-    # ───────────────────────────────────────────────────────────────────────
+            return ClassifyResult(score=0, label="no", track="other")
 
-    # Safety-net overrides that start with "data" but hit a hard-exclude phrase
+    # ── Safety-net: data/ai prefix rescues hard-excluded terms ─────────────────
     is_safety_net = any(override in t for override in DATA_SAFETY_NET_OVERRIDES)
 
     # Hard exclude regexes (internship etc.) — always reject, no override
     for pat in HARD_EXCLUDE_REGEXES:
         if re.search(pat, t):
-            return ClassifyResult(score=0, label="no")
+            return ClassifyResult(score=0, label="no", track="other")
 
     # Hard exclude phrases — reject unless safety-net override
     if not is_safety_net:
         for phrase in HARD_EXCLUDES:
             if phrase in t:
-                return ClassifyResult(score=0, label="no")
+                return ClassifyResult(score=0, label="no", track="other")
 
-    # ── Tiered scoring ──────────────────────────────────────────────────────
-    if any(p in t for p in TIER_1_ROLES):
+    # ── Tiered scoring ─────────────────────────────────────────────────────────
+    track = "other"
+    if any(p in t for p in TIER_1_DE):
         score = 92
+        track = "de"
+    elif any(p in t for p in TIER_1_AI):
+        score = 92
+        track = "ai"
     elif any(p in t for p in TIER_2_ROLES):
         score = 78
+        track = "analyst" if any(w in t for w in ("analyst", "scientist", "bi ")) else "de"
     elif any(p in t for p in TIER_3_ROLES):
         score = 55
+        track = "analyst"
     elif any(p in t for p in DATA_WEAK):
         score = 40
+        track = "other"
     else:
-        return ClassifyResult(score=0, label="no")
-    # ───────────────────────────────────────────────────────────────────────
+        return ClassifyResult(score=0, label="no", track="other")
 
-    # Seniority cap — senior/staff/principal → "maybe"; director/vp → "no"
+    # Seniority cap
     for tok in SENIORITY_TOKENS:
         if re.search(rf"\b{re.escape(tok)}\b", t):
             if tok in VERY_SENIOR:
@@ -386,15 +419,8 @@ def classify(title: str) -> ClassifyResult:
             break
 
     score = max(0, min(score, 100))
-
-    if score >= 70:
-        label = "yes"
-    elif score >= 40:
-        label = "maybe"
-    else:
-        label = "no"
-
-    return ClassifyResult(score=score, label=label)
+    label = "yes" if score >= 70 else "maybe" if score >= 40 else "no"
+    return ClassifyResult(score=score, label=label, track=track)
 
 
 def is_match(title: str) -> bool:

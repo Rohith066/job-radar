@@ -116,6 +116,36 @@ TARGET_COMPANIES: list[tuple[str, int]] = [
     (" ey ", 8),
     ("kpmg", 8),
     ("capgemini", 8),
+
+    # AI / LLM companies — strong H1B sponsors, primary Track B targets
+    ("anthropic", 12),
+    ("openai", 12),
+    ("cohere", 10),
+    ("hugging face", 10),
+    ("scale ai", 10),
+    ("langchain", 8),
+    ("pinecone", 8),
+    ("weights & biases", 8),
+    ("arize", 8),
+    ("together ai", 8),
+    ("mistral", 8),
+    ("replicate", 8),
+    ("modal", 8),
+    ("perplexity", 8),
+    ("groq", 8),
+    ("nvidia", 10),
+
+    # Data Engineering / Platform companies — primary Track A targets
+    ("dbt labs", 10),
+    ("astronomer", 10),
+    ("fivetran", 10),
+    ("monte carlo", 8),
+    ("atlan", 8),
+    ("collibra", 8),
+    ("airbyte", 8),
+    ("astronomer", 10),
+    ("prefect", 8),
+    ("dagster", 8),
 ]
 
 

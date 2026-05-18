@@ -45,9 +45,10 @@ class Job:
     experience_ok: bool = True  # False when JD requires more years than MAX_EXPERIENCE_YEARS
     # ── Ephemeral fields — computed each run, NOT persisted to DB ──────────────
     top_bullets: list = field(default_factory=list)  # top 3 resume bullets matching this JD
-    linkedin_dm: str = ""   # pre-written LinkedIn outreach message
-    ghost_level: str = ""   # "" | "caution" | "suspicious"
+    linkedin_dm: str = ""    # pre-written LinkedIn outreach message
+    ghost_level: str = ""    # "" | "caution" | "suspicious"
     ghost_reasons: list = field(default_factory=list)  # reasons for ghost flag
+    resume_track: str = ""   # "de" | "ai" | "" — which resume matched best
 
 
 def make_location(parts: list[Optional[str]]) -> str:

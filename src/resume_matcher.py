@@ -158,6 +158,29 @@ _SKILLS: list[str] = [
     "agile", "scrum", "jira", "confluence",
     "financial analysis", "commercial analytics",
     "product analytics", "marketing analytics",
+    # ── LLM / AI Engineering (Track B) ──────────────────────────────────────
+    "langchain", "llm", "large language model",
+    "rag", "retrieval augmented generation",
+    "faiss", "vector database", "vector store", "vector search",
+    "embedding", "embeddings", "semantic search",
+    "text2sql", "text to sql",
+    "openai", "anthropic", "hugging face", "transformers",
+    "ollama", "mistral", "llama", "gpt",
+    "prompt engineering", "function calling", "multi-agent",
+    "chunking", "metadata filtering", "pymupdf",
+    "pytorch", "torch",
+    "pinecone", "weaviate", "chroma", "qdrant",
+    "retrieval", "reranking", "mmr retrieval",
+    "document ingestion", "document intelligence",
+    "knowledge graph", "knowledge base",
+    # ── Data Engineering extras (Track A) ───────────────────────────────────
+    "medallion architecture", "bronze silver gold",
+    "data contract", "data contracts",
+    "dbt cloud", "dbt core", "dbt models", "dbt tests",
+    "delta lake", "apache iceberg", "hudi",
+    "aws glue", "aws lambda",
+    "partitioning", "clustering", "materialized view",
+    "stored procedure", "window function",
 ]
 _SKILLS_SET = set(_SKILLS)
 
@@ -452,43 +475,76 @@ def fetch_jd_text(url: str, timeout: int = 15) -> str:
 # Batch scorer — called from main.py
 # ---------------------------------------------------------------------------
 
-def batch_score_jobs(jobs: list, resume_path: str = "") -> list:
-    """Score a list of Job objects against the master resume in-place.
+def _load_resume_file(path: str) -> str:
+    """Load a resume file by path. Returns empty string if not found."""
+    p = Path(path)
+    if not p.exists():
+        return ""
+    try:
+        return p.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
 
-    - Skips jobs that already have a description (uses it directly).
-    - For jobs without a description, fetches the JD from the URL.
-    - Updates job.resume_match on each Job.
-    - Returns the same list.
+
+def batch_score_jobs(jobs: list, resume_path: str = "") -> list:
+    """Score jobs against both resumes (DE + AI), pick whichever matches better.
+
+    Dual-resume logic:
+      1. Loads config/resume_de.txt  (Data Engineering track)
+      2. Loads config/resume_ai.txt  (AI Engineering track)
+      3. For each job, scores against both; uses the higher score
+      4. Sets job.resume_track = "de" | "ai" so email shows which resume to send
+    Falls back to master_resume.txt if track-specific files don't exist.
     """
     if not resume_path:
         resume_path = _resume_path_from_env()
 
-    resume_text = load_resume(resume_path)
-    if not resume_text:
-        log.info("Resume matching skipped — no master resume configured at %s", resume_path)
+    # Load all available resumes
+    resume_de  = _load_resume_file("config/resume_de.txt")
+    resume_ai  = _load_resume_file("config/resume_ai.txt")
+    resume_main = load_resume(resume_path)
+
+    candidates: list[tuple[str, str]] = []  # (resume_text, track_label)
+    if resume_de:
+        candidates.append((resume_de, "de"))
+    if resume_ai:
+        candidates.append((resume_ai, "ai"))
+    if resume_main and not candidates:
+        candidates.append((resume_main, "main"))
+
+    if not candidates:
+        log.info("Resume matching skipped — no resume files found")
         return jobs
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def _score_one(job) -> tuple:
-        """Return (job, result)."""
+        """Fetch JD once, then score against all resume candidates. Return best."""
         jd = job.description or ""
         if not jd:
             jd = fetch_jd_text(job.url)
             if jd:
-                job.description = jd  # cache for DB storage
-        result = score_resume_vs_jd(resume_text, jd, job_title=job.title)
-        return job, result
+                job.description = jd
 
-    # Parallelise — cap at 10 workers so we don't hammer ATS servers
+        best_result = None
+        best_track  = ""
+        for resume_text, track in candidates:
+            result = score_resume_vs_jd(resume_text, jd, job_title=job.title)
+            if best_result is None or result.overall_score > best_result.overall_score:
+                best_result = result
+                best_track  = track
+
+        return job, best_result, best_track
+
     with ThreadPoolExecutor(max_workers=10) as ex:
         futures = {ex.submit(_score_one, j): j for j in jobs}
         for fut in as_completed(futures):
             try:
-                job, result = fut.result()
-                job.resume_match = result.overall_score
+                job, result, track = fut.result()
+                job.resume_match  = result.overall_score
                 job.experience_ok = result.experience_ok
-                job.top_bullets  = result.top_bullets
+                job.top_bullets   = result.top_bullets
+                job.resume_track  = track
                 if result.matched_skills:
                     job.linkedin_dm = generate_linkedin_dm(
                         job.company, job.title, result.matched_skills
@@ -502,12 +558,11 @@ def batch_score_jobs(jobs: list, resume_path: str = "") -> list:
                         )
                     else:
                         log.debug(
-                            "Resume match: %s — %s → %d%% (skills %d%%, tfidf %d%%, "
-                            "matched: %s, missing: %s)",
-                            job.company, job.title,
+                            "Resume match [%s]: %s — %s → %d%% (skills %d%%, tfidf %d%%, "
+                            "matched: %s)",
+                            track, job.company, job.title,
                             result.overall_score, result.skill_score, result.tfidf_score,
                             ", ".join(result.matched_skills[:5]) or "none",
-                            ", ".join(result.missing_skills[:5]) or "none",
                         )
             except Exception as e:
                 log.debug("Resume match error for job: %s", e)
