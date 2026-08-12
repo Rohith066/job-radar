@@ -1,0 +1,49 @@
+ROHITH BAYYA
+New York, NY | +1-720-436-4161 | rohithbr6@gmail.com | LinkedIn | GitHub
+AI/ML Engineer | LLM Systems · RAG · Retrieval Engineering | Production Data Infrastructure
+
+SUMMARY
+AI/ML engineer building LLM systems on production data infrastructure. Built a geo-aware agentic RAG service — FAISS retrieval over local embeddings with grounded, cited, hallucination-guarded answers — served via FastAPI over a real-time Kafka to Spark to Delta Lake pipeline, deployed on AWS with CI/CD. Combines hands-on retrieval, embedding, and evaluation work with 3 years of SQL and data engineering, including statistical modeling and A/B experimentation.
+
+TECHNICAL SKILLS
+Languages & ML: Python, SQL, PyTorch, Scikit-learn, Pandas, NumPy, deep learning, feature engineering, time series
+LLM & Agentic Systems: LLMs, LangChain, OpenAI/Anthropic APIs, local LLMs (Ollama, Llama 3.2), prompt engineering, function calling, multi-agent/agentic routing, Text2SQL, hallucination guardrails
+Retrieval & NLP: RAG, FAISS, embeddings (sentence-transformers/MiniLM), semantic search, geo-aware retrieval, vector search, top-k/MMR, metadata filtering, grounded and cited Q&A, evaluation harnesses
+Statistics & Experimentation: A/B testing (Frequentist), experimentation design, statistical validation, ARIMA forecasting, K-means clustering, regression
+MLOps & Data: MLflow, Docker, Terraform, GitHub Actions CI/CD, model evaluation, Kafka, Spark Structured Streaming, Delta Lake, Airflow, dbt, Snowflake, FastAPI, AWS (EC2, S3, Lambda), Git, Linux
+
+PROJECTS
+
+CrisisLens - Geo-Aware Agentic RAG for Crisis Response | github.com/Rohith066/crisislens
+• Built a geo-aware agentic RAG service answering location-specific safety questions: geo-filtering, FAISS semantic retrieval over local MiniLM embeddings, and grounded, cited answers from a local LLM (Llama 3.2).
+• Engineered safety guardrails that constrain answers to retrieved context, cite every source, and defer to authorities when uncertain; designed an evaluation approach measuring groundedness and hallucination rate.
+• Backed retrieval with a real-time Kafka to Spark Structured Streaming to Delta Lake medallion pipeline ingesting USGS and NOAA/NWS feeds with deduplication and exactly-once processing.
+• Deployed live on AWS (Docker image shipped via GitHub Actions CI/CD to GHCR; EC2 provisioned with Terraform) with a Leaflet map UI; fully local models with zero API cost.
+
+ClimateGPT Fusion - Multi-Agent LLM Analytics System | Python, GPT-4, Claude API, LangChain, Text2SQL, DuckDB
+• Designed an agentic router dispatching questions to RAG over documents, Text2SQL over DuckDB, or direct LLM answering, with function-calling schemas for tool and model selection and SQL validation before execution.
+• Built an evaluation harness comparing SQL correctness, groundedness, hallucination risk, response quality, and latency across prompt and model versions.
+
+Internal Knowledge Assistant - RAG Pipeline | Python, LangChain, FAISS, Streamlit, Embeddings, PyMuPDF
+• Built an end-to-end RAG pipeline over a public document corpus into FAISS-indexed chunks; compared OpenAI and Hugging Face sentence-transformer embeddings on a held-out query set and tuned chunk size, overlap, and retrieval parameters.
+• Delivered source-grounded Q&A with retrieved-context constraints, metadata filtering, and inline citation display.
+
+Job-Radar - ML-Driven Job Matching System | Python, scikit-learn, TF-IDF, CI/CD
+• Built an automated system scraping 15+ sources hourly and ranking roles with a LogisticRegression relevance model trained on user feedback, plus resume-to-JD semantic matching and a self-improving feedback loop.
+
+EXPERIENCE
+
+Data & AI Engineer (Co-op) | SciEncephalon | Remote | Jan 2025 - Dec 2025
+• Developed retrieval components for internal document-intelligence tooling using chunking, embeddings, metadata filtering, and top-k retrieval, enabling natural-language search over enterprise documents.
+• Reduced manual reporting time by 60% and improved pipeline throughput by 40% by automating Python ingestion and transformation pipelines processing 10,000+ documents per cycle for AI and analytics workflows.
+• Achieved zero undetected pipeline failures during the monitored period via stage-level logging, anomaly monitoring, and validation checks.
+
+Data Analyst | XIT Solutions | Hyderabad, India | Jan 2022 - Dec 2023
+• Designed and executed a Frequentist A/B experiment across 8 product categories (6-month holdout), achieving a 25% stockout reduction sustained at 18-20% post-test.
+• Built ARIMA forecasting models (8-12% MAPE) and K-means segmentation across 200+ client accounts to support planning and account analysis.
+• Cut report load times ~45% by optimizing 12+ SQL queries over 10M+ financial records; established KPI governance, field-level lineage, and data-quality checks adopted across 3 business units and 50+ reports.
+
+EDUCATION
+M.S. Data Analytics Engineering | George Mason University, Fairfax, VA | 2025
+Coursework: Machine Learning, Statistical Learning, NLP, Big Data Analytics, Data Mining, Time Series Analysis
+B.Tech Computer Science | Neil Gogte Institute of Technology, India | 2021

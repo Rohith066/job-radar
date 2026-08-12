@@ -1,0 +1,46 @@
+name: Job Radar — Main Sources
+
+on:
+  schedule:
+    # Weekdays: every hour 8 AM – 8 PM EDT (UTC-4) = 12:00–00:00 UTC
+    - cron: "0 12-23 * * 1-5"   # 8 AM – 7 PM EDT, Mon–Fri (hourly)
+    - cron: "0 0 * * 2-6"       # 8 PM EDT Mon–Fri (UTC midnight Tue–Sat)
+    # Weekend: every 3 hours 9 AM – 6 PM EDT
+    - cron: "0 13,16,19,22 * * 6,0"  # 9 AM, 12 PM, 3 PM, 6 PM EDT Sat & Sun
+  workflow_dispatch:           # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Job Radar (main mode)
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python -m src.main --mode main
+
+      - name: Commit state
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/
+          git diff --cached --quiet || git commit -m "chore: update state [skip ci]"
+          git push

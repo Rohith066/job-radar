@@ -1,0 +1,11 @@
+# Optional: enables the semantic layer of the hybrid resume/JD matcher.
+#
+# NOT required for job-radar to run. Without these, matching still works using
+# the deterministic layers (aliases, acronyms, canonical skills, family veto)
+# plus TF-IDF document similarity — it just loses the SEMANTIC match class.
+#
+# Deliberately kept out of requirements.txt: torch is ~2 GB and job-radar runs
+# hourly on GitHub Actions, where that download cost is not worth paying.
+#
+#   pip install -r requirements-semantic.txt
+sentence-transformers>=3.0.0

@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.venv/
+venv/
+config.yaml
+# state/*.db is intentionally NOT ignored — the DB must persist between GitHub Actions runs.
+# If you want to reset job history, delete state/jobs.db manually and recommit.
+state/*.csv
+
+# Cached sentence-transformer embeddings (regenerable)
+state/embeddings/

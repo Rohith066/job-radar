@@ -1,0 +1,49 @@
+ROHITH BAYYA
+New York, NY | +1-720-436-4161 | rohithbr6@gmail.com | LinkedIn | GitHub
+Data Engineer | Analytics Engineering | dbt · Snowflake · Airflow · Spark
+
+SUMMARY
+Data engineer with 3 years building production pipelines across the modern data stack — dbt, Snowflake, Airflow, and Python — with advanced SQL and dimensional modeling. Built and deployed CrisisLens, a real-time streaming platform (Kafka to Spark Structured Streaming to a Delta Lake medallion lakehouse) running live on AWS via Terraform and CI/CD. Two years of production SQL pipeline work over 10M+ financial records for Finance and Risk, including KPI governance, field-level lineage, and executive BI reporting. Targeting analytics engineering and platform data engineering roles.
+
+TECHNICAL SKILLS
+Languages: Python, SQL, PySpark, Bash, Scala
+Analytics Engineering: dbt Cloud (models, tests, snapshots, incremental models), data contracts, ELT, semantic/metrics layers
+Orchestration & Streaming: Apache Airflow (DAGs, sensors, operators), Apache Kafka (idempotent producers, exactly-once), Spark Structured Streaming
+Warehousing & Storage: Snowflake, Delta Lake (MERGE upserts, medallion architecture), AWS S3, DuckDB, PostgreSQL, partitioning, clustering
+Data Modeling: dimensional modeling, star schema, slowly changing dimensions (SCD), normalization, schema design
+SQL & Performance: window functions, stored procedures, materialized views, CTEs, query optimization
+Data Quality & Governance: data governance, KPI governance, schema validation, dbt tests, data lineage, anomaly detection, data observability
+Cloud & DevOps: AWS (EC2, S3, Lambda), Docker, Terraform, GitHub Actions CI/CD, Git, Linux
+BI & Analytics: Power BI, Tableau, Streamlit, Plotly, Pandas, NumPy, MLflow, A/B testing, ARIMA, K-means
+
+EDUCATION
+M.S. Data Analytics Engineering | George Mason University, Fairfax, VA | 2025
+Coursework: Big Data Analytics, Data Mining, Time Series Analysis, Machine Learning, Statistical Learning
+B.Tech Computer Science | Neil Gogte Institute of Technology, India | 2021
+
+EXPERIENCE
+
+Data & AI Engineer (Co-op) | SciEncephalon | Remote | Jan 2025 - Dec 2025
+• Reduced manual reporting time by 60% and improved pipeline throughput by 40% by automating Python ETL/ELT pipelines processing 10,000+ documents per cycle with schema normalization and business-rule validation.
+• Achieved zero undetected pipeline failures during the monitored period by implementing per-stage failure logging, anomaly monitoring, and iterative data-quality validation.
+• Eliminated a recurring ad-hoc request backlog by building a Streamlit self-serve analytics interface for non-technical stakeholders to query and monitor pipeline outputs independently.
+
+Data Analyst | XIT Solutions | Hyderabad, India | Jan 2022 - Dec 2023
+• Cut report load times ~45% by optimizing 12+ SQL queries over 10M+ financial records using window functions, CTEs, stored procedures, and materialized views, applying dimensional modeling and query-tuning patterns across Finance, Risk, and Compliance domains.
+• Established a KPI governance and data-quality framework with validation stored procedures, metadata documentation, and field-level data lineage, adopted as the metrics standard across 3 business units and 50+ downstream reports.
+• Built and maintained 15+ Power BI executive dashboards covering daily operational, MBR, and QBR cadences for Finance, Risk, and Compliance leadership.
+• Designed and executed a Frequentist A/B experiment across 8 product categories, achieving a 25% stockout reduction sustained at 18-20% post-test; automated 15+ recurring reporting workflows and built ARIMA forecasts (8-12% MAPE).
+
+PROJECTS
+
+CrisisLens - Real-Time Disaster Data Platform | github.com/Rohith066/crisislens | Kafka, Spark, Delta Lake, AWS, Terraform
+• Deployed a live end-to-end streaming platform on AWS (EC2 provisioned via Terraform; Docker image shipped through GitHub Actions CI/CD to GHCR) serving a public hazard API and map.
+• Streamed live USGS earthquake and NOAA/NWS weather feeds into Kafka (confluent-kafka, idempotent producer, acks=all), normalizing two heterogeneous sources into one canonical schema with restart-safe deduplication (verified zero duplicate events across restarts).
+• Engineered a Spark Structured Streaming medallion lakehouse (bronze to silver to gold) on Delta Lake with exactly-once checkpointing, latest-version deduplication via Delta MERGE upserts, and quality filtering — the same Delta and Spark engine that powers Databricks environments.
+• Served gold marts through a FastAPI geo-distance API (vectorized haversine) backing a live Leaflet hazard map.
+
+Cloud-Native Analytics Lakehouse | AWS S3, PySpark, Snowflake, dbt, Airflow, Delta Lake, MLflow, Docker
+• Built an end-to-end medallion lakehouse (bronze/silver/gold) with dbt models, tests, and snapshots enforcing data contracts; orchestrated via Airflow DAGs and tuned PySpark and Snowflake using partitioning, clustering, and materialized views.
+
+Job-Radar - Automated Multi-Source Data Pipeline | Python, GitHub Actions CI/CD, SQLite, ETL
+• Built a production ETL pipeline ingesting from 15+ job-board APIs and 11,000+ ATS boards hourly via GitHub Actions CI/CD, with deterministic deduplication, incremental processing, and multi-stage data-quality filtering.

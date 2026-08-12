@@ -1,0 +1,57 @@
+name: Job Radar — Board Sweep Shard 2 (GH/Lever verified)
+
+on:
+  schedule:
+    # Every 3 hours at :43 — offset from main (:00) and boards (:30) lanes
+    - cron: "43 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Boards per batch (default: 1200)"
+        required: false
+        default: "1200"
+
+concurrency:
+  group: boards2
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run board sweep (shard 2 — greenhouse/lever verified-live)
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          BATCH=${{ github.event.inputs.batch_size || '1200' }}
+          python -m src.main --mode boards \
+            --boards-csv data/boards/greenhouse_lever_verified_live.csv \
+            --boards-batch-size $BATCH
+
+      - name: Commit state
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/
+          git diff --cached --quiet || git commit -m "chore: update boards2 state [skip ci]"
+          git pull --rebase -X theirs origin main || true
+          git push
