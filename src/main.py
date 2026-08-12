@@ -775,7 +775,18 @@ def _dispatch_results(
         log.debug("Saved %d jobs to database.", len(matched))
 
         # Auto-expiry — clean up jobs not seen in 60 days to keep DB lean
-        db.expire_old_jobs(days=60)
+        expired = db.expire_old_jobs(days=60)
+
+        # Description pruning — stored JD text dominates DB size (47 MB of 57 MB
+        # before this was added) and the whole file is recommitted to git on every
+        # workflow run. Descriptions are only needed while a posting is live, so
+        # blank them once a job ages out; the row and its score are retained.
+        pruned, freed = db.prune_old_descriptions()
+
+        # VACUUM only when something was actually reclaimed — it rewrites the
+        # whole file, so it is not worth doing on a no-op run.
+        if expired or pruned:
+            db.vacuum()
 
 
 # ---------------------------------------------------------------------------

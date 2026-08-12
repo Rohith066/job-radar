@@ -17,6 +17,12 @@ from typing import Iterator, Optional
 log = logging.getLogger(__name__)
 
 
+# Job descriptions dominate DB size (47 MB of 57 MB when this was added).
+# They are only needed while a posting is live — long enough to score, alert,
+# and run --tailor. Override with DESCRIPTION_RETENTION_DAYS.
+DESCRIPTION_RETENTION_DAYS = int(os.environ.get("DESCRIPTION_RETENTION_DAYS", 30))
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -286,6 +292,56 @@ class Database:
         if deleted:
             log.info("Expired %d stale job(s) older than %d days", deleted, days)
         return deleted
+
+    def prune_old_descriptions(self, days: int = DESCRIPTION_RETENTION_DAYS) -> tuple[int, int]:
+        """Blank stored JD text for jobs not seen within the last `days` days.
+
+        Job descriptions dominate database size — they were 47 MB of a 57 MB
+        file — and they are only needed while a posting is live: long enough to
+        score it, alert on it, and run `--tailor` against it. Once a job has
+        aged out, its score and metadata are retained but the raw text is dead
+        weight that gets recommitted to git on every workflow run.
+
+        The row itself is kept (dedup and `count_company_posts` still need it);
+        only `description` is cleared. Returns ``(rows_pruned, bytes_freed)``.
+        """
+        row = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(description)), 0) FROM jobs "
+            "WHERE description != '' AND last_seen < datetime('now', ?)",
+            (f"-{days} days",),
+        ).fetchone()
+        n, freed = (row[0], row[1]) if row else (0, 0)
+        if not n:
+            return 0, 0
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE jobs SET description = '' "
+                "WHERE description != '' AND last_seen < datetime('now', ?)",
+                (f"-{days} days",),
+            )
+        log.info("Pruned descriptions from %d job(s) older than %d days (%.1f MB)",
+                 n, days, freed / 1e6)
+        return n, freed
+
+    def vacuum(self) -> int:
+        """Reclaim free pages so the file actually shrinks on disk.
+
+        DELETE/UPDATE only mark pages free; without VACUUM the file never
+        shrinks and git keeps committing the same size. Must run outside a
+        transaction. Returns bytes reclaimed.
+        """
+        before = os.path.getsize(self.path) if os.path.exists(self.path) else 0
+        try:
+            self._conn.execute("VACUUM")
+        except Exception as e:
+            log.warning("VACUUM failed: %s", e)
+            return 0
+        after = os.path.getsize(self.path) if os.path.exists(self.path) else 0
+        freed = max(0, before - after)
+        if freed:
+            log.info("VACUUM reclaimed %.1f MB (%.1f -> %.1f MB)",
+                     freed / 1e6, before / 1e6, after / 1e6)
+        return freed
 
     def is_duplicate_title(self, company: str, title: str) -> bool:
         """Return True if we already have a job with the same company+title in the DB."""
