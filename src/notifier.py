@@ -66,6 +66,22 @@ def _hours_ago(posted: str) -> Optional[float]:
     return None
 
 
+def fit_band(resume_match: int) -> str:
+    """Human label for a resume-match score.
+
+    Uses the same BAND_STRONG / BAND_MODERATE constants the badge colours and
+    the ranking use, so the email never introduces a second interpretation of
+    what a given score means.
+    """
+    if not resume_match:
+        return ""
+    if resume_match >= BAND_STRONG:
+        return "STRONG FIT"
+    if resume_match >= BAND_MODERATE:
+        return "MODERATE FIT"
+    return "WEAK FIT"
+
+
 def _freshness_badge_html(posted: str) -> str:
     """Return an HTML badge string for how fresh a posting is."""
     h = _hours_ago(posted)
@@ -216,11 +232,12 @@ _HTML_TEMPLATE = """\
 _JOB_CARD = """\
 <div class="job-card job-card-{label}">
   {ghost_banner}
-  <p style="margin:0 0 6px;">{freshness_badge}</p>
+  <p style="margin:0 0 4px;">{fit_headline}{freshness_badge}</p>
   <p class="job-title">{company} &mdash; {title}
     <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}{match_badge}
   </p>
   <p class="job-meta">{location} &middot; {posted_friendly}{salary_line}</p>
+  {skills_section}
   {highlights_section}
   {dm_section}
   <a class="apply-btn" href="{url}" target="_blank">&#9889; APPLY NOW &rarr;</a>
@@ -267,6 +284,34 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             match_badge = f'<span class="badge-match" style="background:#f3f4f6;color:#6b7280;">{rm}%{track_suffix}</span>'
         else:
             match_badge = ""
+
+        # Fit headline — the reason this job sits where it does in the list
+        band = fit_band(rm)
+        if band:
+            colour = ("#15803d" if rm >= BAND_STRONG
+                      else "#a16207" if rm >= BAND_MODERATE else "#6b7280")
+            fit_headline = (
+                f'<span style="font-size:15px;font-weight:700;color:{colour};'
+                f'margin-right:8px;">{rm} &mdash; {band}</span>'
+            )
+        else:
+            fit_headline = ""
+
+        # Matched / gap — why the score is what it is
+        matched = [_html.escape(s) for s in (getattr(job, "matched_skills", []) or [])[:8]]
+        gaps = [_html.escape(s) for s in (getattr(job, "missing_required", []) or [])[:4]]
+        skills_bits = []
+        if matched:
+            skills_bits.append(
+                '<div style="font-size:12px;color:#374151;margin-top:6px;">'
+                '<strong style="color:#15803d;">Matched:</strong> '
+                + " &middot; ".join(matched) + "</div>")
+        if gaps:
+            skills_bits.append(
+                '<div style="font-size:12px;color:#374151;margin-top:3px;">'
+                '<strong style="color:#b45309;">Gap:</strong> '
+                + " &middot; ".join(gaps) + "</div>")
+        skills_section = "".join(skills_bits)
 
         # Salary line
         salary_line = (
@@ -340,6 +385,8 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             score=job.score,
             location=_html.escape(job.location),
             freshness_badge=freshness_badge,
+            fit_headline=fit_headline,
+            skills_section=skills_section,
             posted_friendly=posted_str,
             salary_line=salary_line,
             work_type_badge=work_type_badge,

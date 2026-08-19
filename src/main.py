@@ -254,6 +254,34 @@ def _parse_posted(posted: str) -> Optional[datetime]:
     return None
 
 
+def fit_rank_key(j: "Job") -> tuple:
+    """Sort key for alert ordering: fit first, recency as tiebreaker.
+
+    Ordering rationale — the discovery pipeline already enforces freshness
+    (MAX_JOB_AGE_DAYS) and every hard filter runs before this point, so by the
+    time a job reaches an alert it is *already* known to be recent and eligible.
+    Ranking by recency again wastes the top of the email on whichever eligible
+    job happened to be scraped most recently. Fit is the information the reader
+    does not otherwise have.
+
+    Deliberately NOT a composite like ``0.8*fit + 0.2*recency``: mixing recency
+    into the number would make "92" mean something different from the 92 that
+    the 85/65 bands were calibrated against.
+
+    Returns an ascending-sort tuple:
+      1. scored jobs before unscored (unscored would otherwise sort as fit 0
+         and could not be distinguished from a genuine zero)
+      2. higher resume_match first
+      3. newer first
+
+    Unscored jobs therefore land after all scored jobs, ordered by recency.
+    """
+    rm = getattr(j, "resume_match", 0) or 0
+    dt = _parse_posted(j.posted)
+    ts = dt.timestamp() if dt else 0.0
+    return (0 if rm > 0 else 1, -rm, -ts)
+
+
 def _is_too_old(posted: str, max_days: int = MAX_JOB_AGE_DAYS) -> bool:
     """Return True if job was posted more than max_days ago.
 
@@ -717,13 +745,8 @@ def _dispatch_results(
 
     # Sort by recency first (newest at top), score as tiebreaker —
     # being early to apply matters more than score ordering
-    def _recency_key(j: Job) -> tuple:
-        dt = _parse_posted(j.posted)
-        ts = dt.timestamp() if dt else 0.0
-        return (-ts, -j.score)   # negative ts → newest sorts first
-
-    yes_jobs   = sorted([j for j in matched if j.label == "yes"],   key=_recency_key)
-    maybe_jobs = sorted([j for j in matched if j.label == "maybe"],  key=_recency_key)
+    yes_jobs   = sorted([j for j in matched if j.label == "yes"],   key=fit_rank_key)
+    maybe_jobs = sorted([j for j in matched if j.label == "maybe"],  key=fit_rank_key)
 
     log.info("Matched: %d yes, %d maybe", len(yes_jobs), len(maybe_jobs))
 

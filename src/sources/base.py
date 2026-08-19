@@ -51,6 +51,10 @@ class Job:
     resume_track: str = ""   # "de" | "ai" | "" — which resume matched best
     visa_status: str = ""    # "available" | "none" | "" — sponsorship signal from JD
     visa_phrase: str = ""    # matched JD phrase for the visa status
+    # Surfaced in the email so the reader can see WHY a job ranks where it does.
+    # Both are computed by the matcher already; these fields only carry them.
+    matched_skills: list = field(default_factory=list)   # JD skills the resume satisfies
+    missing_required: list = field(default_factory=list)  # unsatisfied REQUIRED skills
 
 
 def make_location(parts: list[Optional[str]]) -> str:

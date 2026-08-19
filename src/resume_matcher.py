@@ -681,6 +681,10 @@ def batch_score_jobs(jobs: list, resume_path: str = "") -> list:
                 job.experience_ok = result.experience_ok
                 job.top_bullets   = result.top_bullets
                 job.resume_track  = track
+                # Carry match detail through for the email. No recomputation —
+                # these are the same values the score was derived from.
+                job.matched_skills   = list(result.matched_skills)
+                job.missing_required = list(getattr(result, "missing_required", []))
                 if result.matched_skills:
                     job.linkedin_dm = generate_linkedin_dm(
                         job.company, job.title, result.matched_skills
