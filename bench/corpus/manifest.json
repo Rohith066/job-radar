@@ -1,0 +1,20 @@
+{
+  "version": "20260819",
+  "created_utc": "2026-08-19T02:11:55.950684+00:00",
+  "n_jobs": 200,
+  "seed": 1337,
+  "corpus_sha256_16": "593d28fd63c7c3cd",
+  "eligible_pool": 1918,
+  "mix": {
+    "data_engineer": 52,
+    "ml_engineer": 28,
+    "platform_infra": 20,
+    "data_scientist": 24,
+    "data_analyst": 20,
+    "analytics_engineer": 32,
+    "ai_llm": 24
+  },
+  "min_desc_chars": 800,
+  "max_desc_chars": 20000,
+  "note": "Frozen benchmark corpus. Do not regenerate casually \u2014 regenerating invalidates comparisons against prior results."
+}
