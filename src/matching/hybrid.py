@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import ontology, semantic
+from .jd_parser import parse_jd
 from .config import DEFAULT_CONFIG, MatchConfig
 
 log = logging.getLogger(__name__)
@@ -178,6 +179,12 @@ def match(
     jd_skills = ontology.extract_canonical_skills(jd_text)
     resume_sentences = split_sentences(resume_text)
 
+    # Structured requirement extraction (src/matching/jd_parser.py). Parsed
+    # once per JD rather than re-scanning a character window per skill. See
+    # that module for why the window approach was replaced.
+    parsed = parse_jd(jd_text)
+    requirement_kind = {r.canonical: r.kind for r in parsed.requirements}
+
     want_semantic = use_semantic and semantic.is_available()
     sem_matrix = None
     unresolved: list[tuple[str, str]] = []   # (canonical, surface) needing L2
@@ -186,7 +193,7 @@ def match(
 
     # ── Layers 1 & 3: deterministic classification + family veto ─────────────
     for cid, surface in jd_skills.items():
-        required = is_required(jd_text, surface)
+        required = requirement_kind.get(cid) == "required"
 
         # L1a — EXACT: the canonical skill is present under some surface form
         if cid in resume_skills:
@@ -233,7 +240,7 @@ def match(
         sem_matrix = semantic.cosine_matrix(phrases, resume_sentences)
 
     for i, (cid, surface) in enumerate(unresolved):
-        required = is_required(jd_text, surface)
+        required = requirement_kind.get(cid) == "required"
         best_sim, best_sent = None, ""
         if sem_matrix is not None:
             row = sem_matrix[i]
