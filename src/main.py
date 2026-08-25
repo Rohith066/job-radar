@@ -961,7 +961,10 @@ def run_record_feedback(db: Database, identifier: str, action: str) -> None:
     title   = rows[0]["title"] or "?"
 
     db.record_feedback(job_key, action)
-    emoji = {"applied": "✅", "dismissed": "❌", "interested": "🔖"}.get(action, "📝")
+    emoji = {
+        "applied": "✅", "dismissed": "❌", "interested": "🔖",
+        "followed_up": "📮", "responded": "📬", "rejected": "🚫", "offer": "🎉",
+    }.get(action, "📝")
     log.info("%s Recorded '%s' for: [%s] %s", emoji, action, company, title)
 
 
@@ -974,10 +977,22 @@ def run_feedback_summary(db: Database) -> None:
     print(f"  ✅  Applied    : {stats['applied']}")
     print(f"  🔖  Interested : {stats['interested']}")
     print(f"  ❌  Dismissed  : {stats['dismissed']}")
+    print(f"  📮  Followed up: {stats.get('followed_up', 0)}")
+    print(f"  📬  Responded  : {stats.get('responded', 0)}")
+    print(f"  🚫  Rejected   : {stats.get('rejected', 0)}")
+    print(f"  🎉  Offers     : {stats.get('offer', 0)}")
     print(f"  📊  Total      : {stats['total']}")
     print(f"{'='*60}\n")
 
-    for action_label, action_key in [("✅ APPLIED", "applied"), ("🔖 INTERESTED", "interested"), ("❌ DISMISSED", "dismissed")]:
+    for action_label, action_key in [
+        ("✅ APPLIED", "applied"),
+        ("🔖 INTERESTED", "interested"),
+        ("❌ DISMISSED", "dismissed"),
+        ("📮 FOLLOWED UP", "followed_up"),
+        ("📬 RESPONDED", "responded"),
+        ("🚫 REJECTED", "rejected"),
+        ("🎉 OFFER", "offer"),
+    ]:
         jobs = db.get_feedback_jobs(action_key)
         if not jobs:
             continue
@@ -1037,6 +1052,9 @@ def build_parser() -> argparse.ArgumentParser:
     fg.add_argument("--dashboard", action="store_true", help="Open the local feedback dashboard in your browser (http://localhost:5100).")
     fg.add_argument("--followup", action="store_true", help="Send a follow-up reminder email for jobs applied 7+ days ago with no response.")
     fg.add_argument("--followed-up", metavar="JOB_URL_OR_KEY", help="Mark a job as followed-up (removes it from future follow-up reminders).")
+    fg.add_argument("--responded", metavar="JOB_URL_OR_KEY", help="Mark a job as having received a recruiter response.")
+    fg.add_argument("--rejected", metavar="JOB_URL_OR_KEY", help="Mark a job as rejected.")
+    fg.add_argument("--offer", metavar="JOB_URL_OR_KEY", help="Mark a job as having produced an offer.")
     fg.add_argument("--tailor", metavar="JOB_URL_OR_KEY", help="Generate a JD-specific resume tailoring cheat-sheet for a job (copy the URL from the email).")
     fg.add_argument("--tailor-write", action="store_true", help="With --tailor: also write a tailored resume copy to output/.")
 
@@ -1092,6 +1110,18 @@ def main(argv: Optional[list[str]] = None) -> None:
 
         if getattr(args, "followed_up", None):
             run_record_feedback(db=db, identifier=args.followed_up, action="followed_up")
+            return
+
+        if args.responded:
+            run_record_feedback(db=db, identifier=args.responded, action="responded")
+            return
+
+        if args.rejected:
+            run_record_feedback(db=db, identifier=args.rejected, action="rejected")
+            return
+
+        if args.offer:
+            run_record_feedback(db=db, identifier=args.offer, action="offer")
             return
 
         if getattr(args, "followup", False):

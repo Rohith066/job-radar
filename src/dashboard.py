@@ -85,6 +85,9 @@ _HTML = """\
   .btn-applied {{ background: #dcfce7; color: #15803d; }}
   .btn-interested {{ background: #ede9fe; color: #5b21b6; }}
   .btn-dismiss {{ background: #fee2e2; color: #991b1b; }}
+  .btn-responded {{ background: #dbeafe; color: #1d4ed8; }}
+  .btn-rejected {{ background: #fee2e2; color: #991b1b; }}
+  .btn-offer {{ background: #fef08a; color: #854d0e; }}
   .feedback-done {{ font-size: 12px; color: #888; text-align: center; margin-top: 4px; }}
   .empty {{ text-align: center; color: #888; padding: 48px; font-size: 15px; }}
   .toast {{ position: fixed; bottom: 24px; right: 24px; background: #1a1a2e; color: #fff;
@@ -140,6 +143,14 @@ function loadStats() {{
   }});
 }}
 
+function outcomeButtons(jobKey) {{
+  return `
+    <div class="feedback-done">✅ Applied</div>
+    <button class="btn btn-responded" onclick="recordFeedback('${{jobKey}}','responded',this.closest('.card'))">📬 Responded</button>
+    <button class="btn btn-rejected"  onclick="recordFeedback('${{jobKey}}','rejected',this.closest('.card'))">🚫 Rejected</button>
+    <button class="btn btn-offer"     onclick="recordFeedback('${{jobKey}}','offer',this.closest('.card'))">🎉 Offer</button>`;
+}}
+
 function recordFeedback(jobKey, action, card) {{
   fetch('/api/feedback', {{
     method: 'POST',
@@ -147,10 +158,16 @@ function recordFeedback(jobKey, action, card) {{
     body: JSON.stringify({{ job_key: jobKey, action }})
   }}).then(r => r.json()).then(d => {{
     if (d.ok) {{
-      card.classList.add('done');
-      const labels = {{ applied:'✅ Applied', interested:'🔖 Saved', dismissed:'❌ Dismissed' }};
-      card.querySelector('.actions').innerHTML =
-        `<div class="feedback-done">${{labels[action] || action}}</div>`;
+      const labels = {{ applied:'✅ Applied', interested:'🔖 Saved', dismissed:'❌ Dismissed',
+                        responded:'📬 Responded', rejected:'🚫 Rejected', offer:'🎉 Offer' }};
+      if (action === 'applied') {{
+        // Still actionable: swap in the outcome buttons rather than closing the card out.
+        card.querySelector('.actions').innerHTML = outcomeButtons(jobKey);
+      }} else {{
+        card.classList.add('done');
+        card.querySelector('.actions').innerHTML =
+          `<div class="feedback-done">${{labels[action] || action}}</div>`;
+      }}
       showToast(d.message || 'Saved!');
       loadStats();
     }}
@@ -180,14 +197,17 @@ function renderJobs(jobs) {{
       const wt         = workBadge(j.work_type || '');
       const sal        = j.salary ? `<span style="color:#15803d;font-weight:600;margin-left:6px;">💰 ${{j.salary}}</span>` : '';
       const posted     = j.posted ? ` · ${{j.posted}}` : '';
-      const fb         = j.feedback ? `<div class="feedback-done">${{
-        {{applied:'✅ Applied', interested:'🔖 Saved', dismissed:'❌ Dismissed'}}[j.feedback] || j.feedback
+      // Outcome buttons are only meaningful once an application exists, so they
+      // replace the action row on 'applied' cards and appear nowhere else.
+      const fb         = j.feedback === 'applied' ? outcomeButtons(j.key) : j.feedback ? `<div class="feedback-done">${{
+        {{applied:'✅ Applied', interested:'🔖 Saved', dismissed:'❌ Dismissed',
+          responded:'📬 Responded', rejected:'🚫 Rejected', offer:'🎉 Offer'}}[j.feedback] || j.feedback
       }}</div>` : `
         <button class="btn btn-applied"     onclick="recordFeedback('${{j.key}}','applied',this.closest('.card'))">✅ Applied</button>
         <button class="btn btn-interested"  onclick="recordFeedback('${{j.key}}','interested',this.closest('.card'))">🔖 Save</button>
         <button class="btn btn-dismiss"     onclick="recordFeedback('${{j.key}}','dismissed',this.closest('.card'))">❌ Dismiss</button>`;
       return `
-      <div class="card ${{j.label}}${{j.feedback ? ' done' : ''}}">
+      <div class="card ${{j.label}}${{j.feedback && j.feedback !== 'applied' ? ' done' : ''}}">
         <div class="job-info">
           <div class="job-title">${{j.company}} — ${{j.title}} ${{scoreBadge}}${{matchBadge}}${{wt}}</div>
           <div class="job-meta">${{j.location}}${{posted}}${{sal}}</div>
@@ -254,13 +274,19 @@ class _Handler(BaseHTTPRequestHandler):
             job_key = body.get("job_key", "")
             action  = body.get("action", "")
 
-            if not job_key or action not in ("applied", "dismissed", "interested"):
+            if not job_key or action not in (
+                "applied", "dismissed", "interested",
+                "responded", "rejected", "offer",
+            ):
                 self._send(400, "application/json", json.dumps({"ok": False, "message": "Invalid input"}))
                 return
 
             try:
                 _db.record_feedback(job_key, action)
-                emoji = {"applied": "✅ Applied", "dismissed": "❌ Dismissed", "interested": "🔖 Saved"}
+                emoji = {
+                    "applied": "✅ Applied", "dismissed": "❌ Dismissed", "interested": "🔖 Saved",
+                    "responded": "📬 Responded", "rejected": "🚫 Rejected", "offer": "🎉 Offer",
+                }
                 self._send(200, "application/json", json.dumps({
                     "ok": True,
                     "message": f"{emoji.get(action, action)} — saved!",
@@ -287,8 +313,10 @@ def _get_recent_jobs() -> list[dict]:
                   f.action as feedback
            FROM jobs j
            LEFT JOIN (
-               SELECT job_key, action FROM feedback
-               GROUP BY job_key ORDER BY created_at DESC
+               -- MAX(created_at) makes SQLite take the bare `action` column from
+               -- the latest row per job; a plain GROUP BY picked an arbitrary one.
+               SELECT job_key, action, MAX(created_at) FROM feedback
+               GROUP BY job_key
            ) f ON f.job_key = j.key
            WHERE j.label IN ('yes', 'maybe')
              AND j.first_seen >= datetime('now', '-14 days')
@@ -332,4 +360,8 @@ def _render_html() -> str:
     """Inject the configured match bands into the dashboard template."""
     return (_HTML
             .replace("__BAND_STRONG__", str(BAND_STRONG))
-            .replace("__BAND_MODERATE__", str(BAND_MODERATE)))
+            .replace("__BAND_MODERATE__", str(BAND_MODERATE))
+            # The template escapes its CSS/JS braces as {{ }} for a .format()
+            # pass that no longer happens, so unescape them here.
+            .replace("{{", "{")
+            .replace("}}", "}"))
