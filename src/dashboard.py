@@ -315,7 +315,7 @@ def _get_recent_jobs() -> list[dict]:
            LEFT JOIN (
                -- MAX(created_at) makes SQLite take the bare `action` column from
                -- the latest row per job; a plain GROUP BY picked an arbitrary one.
-               SELECT job_key, action, MAX(created_at) FROM feedback
+               SELECT job_key, action, MAX(created_at) FROM userstate.user_feedback
                GROUP BY job_key
            ) f ON f.job_key = j.key
            WHERE j.label IN ('yes', 'maybe')

@@ -116,15 +116,50 @@ CREATE INDEX IF NOT EXISTS idx_feedback_action ON feedback(action);
 
 
 class Database:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, *, user_state: str | None = None,
+                 attach_user_state: bool = True, readonly: bool = False) -> None:
+        """Open the discovery database.
+
+        `readonly=True` opens it via a mode=ro URI and skips schema creation and
+        migration, so the file is not touched at all. The application CLI uses
+        this: a user decision must never dirty state/jobs.db, and merely opening
+        it read-write would, because migration and WAL both rewrite the file.
+        An attached user-state database stays writable.
+        """
         self.path = path
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.executescript(CREATE_SQL)
-        self._migrate()
-        self._conn.commit()
-        log.debug("Database opened: %s", path)
+        self.readonly = readonly
+        if readonly:
+            # immutable=1 also suppresses -wal/-shm sidecar creation.
+            uri = f"file:{os.path.abspath(path)}?mode=ro&immutable=1"
+            self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+        else:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            self._conn = sqlite3.connect(path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.executescript(CREATE_SQL)
+            self._migrate()
+            self._conn.commit()
+
+        # User-owned state lives in a separate file outside the repository, so
+        # CI replacing state/jobs.db cannot destroy application history. It is
+        # ATTACHed rather than opened separately so the queue and follow-up
+        # queries can still JOIN discovery jobs against user status.
+        self.user_state_path = None
+        if attach_user_state:
+            try:
+                from .apply.user_state import attach as _attach, import_legacy
+                self.user_state_path = _attach(self._conn, user_state)
+                import_legacy(self._conn)   # one-time, non-destructive copy
+            except Exception as exc:      # never block discovery on user state
+                log.warning("User-state database unavailable (%s) — "
+                            "application features disabled this run", exc)
+                self.user_state_path = None
+        log.debug("Database opened: %s (user state: %s)", path, self.user_state_path)
+
+    @property
+    def has_user_state(self) -> bool:
+        return self.user_state_path is not None
 
     def _migrate(self) -> None:
         """Add new columns to existing databases (safe — uses ALTER TABLE IF NOT EXISTS pattern)."""
@@ -503,8 +538,11 @@ class Database:
         """
         from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        # Applied events now live in user state; legacy ones remain in the
+        # discovery DB. The union covers both without double-counting.
+        union = self._feedback_union_sql()
         rows = self._conn.execute(
-            """
+            f"""
             SELECT f.job_key,
                    f.created_at   AS applied_at,
                    j.company,
@@ -513,15 +551,15 @@ class Database:
                    j.location,
                    j.work_type,
                    j.salary
-            FROM   feedback f
+            FROM   ({union}) f
             JOIN   jobs j ON j.key = f.job_key
-            LEFT   JOIN applications a ON a.job_key = f.job_key
+            LEFT   JOIN userstate.applications a ON a.job_key = f.job_key
             WHERE  f.action = 'applied'
               AND  f.created_at <= ?
               AND  CASE
                        WHEN a.status IS NOT NULL THEN a.status = 'APPLIED'
                        ELSE NOT EXISTS (
-                                SELECT 1 FROM feedback f2
+                                SELECT 1 FROM ({union}) f2
                                 WHERE  f2.job_key = f.job_key
                                   AND  f2.action IN ('followed_up','responded','rejected','offer')
                                   AND  f2.created_at > f.created_at
@@ -533,11 +571,21 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def record_feedback(self, job_key: str, action: str, notes: str = "") -> bool:
-        """Store user feedback for a job.
+    def record_feedback(self, job_key: str, action: str, notes: str = "",
+                        origin: str = "user") -> bool:
+        """Store a feedback event.
 
-        action: 'applied' | 'dismissed' | 'interested' |
-                'followed_up' | 'responded' | 'rejected' | 'offer'
+        `origin` decides where it lands, and that routing is the whole point of
+        the Phase 2.1 split:
+
+        * ``"user"``   — an explicit human decision. Written to the durable
+          user-state database, where the preference model reads its labels.
+        * ``"system"`` — a machine-generated signal, currently only the
+          auto-seed in `_dispatch_results` that fires when a resume match clears
+          AUTO_INTERESTED_THRESHOLD. Written to the discovery database, which
+          keeps existing behaviour working, and is never read as a preference
+          label. Without this a prediction would train the model that produced
+          it.
 
         Returns True if the job_key exists in the jobs table.
         """
@@ -549,6 +597,15 @@ class Database:
             raise ValueError(f"action must be one of {valid_actions}, got {action!r}")
         # Verify job exists (warn but still record so feedback isn't lost)
         exists = self._conn.execute("SELECT 1 FROM jobs WHERE key=?", (job_key,)).fetchone() is not None
+        if origin == "user" and self.has_user_state:
+            with self._tx() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO userstate.user_feedback"
+                    "(job_key, action, created_at, notes, origin) VALUES(?,?,?,?,'user')",
+                    (job_key, action, _now(), notes),
+                )
+            return exists
+        # System signals, and the no-user-state fallback, stay in discovery.
         with self._tx() as conn:
             conn.execute(
                 "INSERT INTO feedback(job_key, action, created_at, notes) VALUES(?,?,?,?)",
@@ -556,10 +613,37 @@ class Database:
             )
         return exists
 
+    def _feedback_union_sql(self) -> str:
+        """The authoritative source of USER preference events.
+
+        After the Phase 2.1 split this is user state alone, not a union with
+        discovery. A running union would keep pulling in future
+        `discovery.feedback` rows, and those are now exclusively
+        system-generated `interested` events from the auto-seed — letting the
+        preference model train on its own predictions.
+
+        Pre-split history is brought across once by
+        `user_state.import_legacy`, so nothing is lost. The discovery table
+        remains readable for system signals and is never consulted here.
+        """
+        if not self.has_user_state:
+            # No user state (e.g. a discovery-only utility connection): fall
+            # back to legacy history, minus the ambiguous auto-seed action.
+            return ("SELECT job_key, action, created_at, notes FROM main.feedback "
+                    "WHERE action <> 'interested'")
+        return "SELECT job_key, action, created_at, notes FROM userstate.user_feedback"
+
+    def system_signal_stats(self) -> dict:
+        """Counts of machine-generated signals, reported separately from user
+        behaviour so the two are never conflated."""
+        return {r["action"]: r["cnt"] for r in self._conn.execute(
+            "SELECT action, COUNT(*) cnt FROM main.feedback GROUP BY action")}
+
     def get_feedback_stats(self) -> dict:
-        """Return counts of each feedback action."""
+        """Return counts of each feedback action (legacy + user state, deduped)."""
         rows = self._conn.execute(
-            "SELECT action, COUNT(*) as cnt FROM feedback GROUP BY action"
+            f"SELECT action, COUNT(*) as cnt FROM ({self._feedback_union_sql()}) "
+            "GROUP BY action"
         ).fetchall()
         stats = {"applied": 0, "dismissed": 0, "interested": 0, "total": 0}
         for r in rows:
@@ -568,22 +652,18 @@ class Database:
         return stats
 
     def get_feedback_jobs(self, action: str | None = None) -> list[dict]:
-        """Return all feedback entries, optionally filtered by action."""
+        """Return feedback entries (legacy + user state, deduped), optionally
+        filtered by action. This is what the preference model trains on."""
+        union = self._feedback_union_sql()
+        base = (f"SELECT f.job_key, f.action, f.created_at, f.notes, "
+                f"       j.company, j.title, j.url, j.score, j.label, j.source, j.work_type "
+                f"FROM ({union}) f LEFT JOIN jobs j ON j.key = f.job_key ")
         if action:
             rows = self._conn.execute(
-                """SELECT f.job_key, f.action, f.created_at, f.notes,
-                          j.company, j.title, j.url, j.score, j.label
-                   FROM feedback f LEFT JOIN jobs j ON j.key = f.job_key
-                   WHERE f.action = ? ORDER BY f.created_at DESC""",
-                (action,),
+                base + "WHERE f.action = ? ORDER BY f.created_at DESC", (action,)
             ).fetchall()
         else:
-            rows = self._conn.execute(
-                """SELECT f.job_key, f.action, f.created_at, f.notes,
-                          j.company, j.title, j.url, j.score, j.label
-                   FROM feedback f LEFT JOIN jobs j ON j.key = f.job_key
-                   ORDER BY f.created_at DESC"""
-            ).fetchall()
+            rows = self._conn.execute(base + "ORDER BY f.created_at DESC").fetchall()
         return [dict(r) for r in rows]
 
     def export_dead_boards_csv(self, out_path: str) -> None:

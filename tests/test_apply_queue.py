@@ -122,9 +122,14 @@ def test_snapshot_is_not_overwritten_by_later_transitions(db):
 
 # ── Feedback interop ──────────────────────────────────────────────────────
 def test_status_change_also_writes_the_feedback_event(db):
+    """The preference model must still see the event — now via user state."""
     ApplicationQueue(db).set_status("k2", APPLIED)
-    actions = [r[0] for r in db._conn.execute("SELECT action FROM feedback WHERE job_key='k2'")]
-    assert "applied" in actions, "the existing feedback log must keep receiving events"
+    actions = [r[0] for r in db._conn.execute(
+        f"SELECT action FROM ({db._feedback_union_sql()}) WHERE job_key='k2'")]
+    assert "applied" in actions
+    assert db._conn.execute(
+        "SELECT COUNT(*) FROM main.feedback WHERE job_key='k2'").fetchone()[0] == 0, \
+        "a user action must not write to the discovery database"
 
 
 # ── Shortlist suppression ─────────────────────────────────────────────────

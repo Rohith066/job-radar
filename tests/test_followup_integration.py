@@ -31,8 +31,14 @@ def db(tmp_path):
 
 
 def _age_applied(db, key, when=OLD):
-    """Backdate the 'applied' feedback event so the age threshold is crossed."""
-    db._conn.execute("UPDATE feedback SET created_at=? WHERE job_key=? AND action='applied'",
+    """Backdate the 'applied' event so the age threshold is crossed.
+
+    Queue-recorded events live in user state; legacy ones in the discovery DB.
+    """
+    db._conn.execute(
+        "UPDATE userstate.user_feedback SET created_at=? WHERE job_key=? AND action='applied'",
+        (when, key))
+    db._conn.execute("UPDATE main.feedback SET created_at=? WHERE job_key=? AND action='applied'",
                      (when, key))
     db._conn.commit()
 
@@ -43,7 +49,8 @@ def _due(db, days=7):
 
 def _feedback(db, key):
     return [r[0] for r in db._conn.execute(
-        "SELECT action FROM feedback WHERE job_key=? ORDER BY created_at", (key,))]
+        f"SELECT action FROM ({db._feedback_union_sql()}) WHERE job_key=? ORDER BY created_at",
+        (key,))]
 
 
 # ── Queue-backed jobs: status is authoritative ────────────────────────────

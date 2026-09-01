@@ -9,8 +9,15 @@
     python3 -m src.apply no-response <job_key>
     python3 -m src.apply skip      <job_key>
     python3 -m src.apply metrics [--days 7]
+    python3 -m src.apply observe [--days 1] [--json]
+    python3 -m src.apply backup
+    python3 -m src.apply where            # which databases are in use
 
 Decision support and tracking only. Nothing here contacts an employer.
+
+User decisions are written to a user-state database outside the repository
+(default ~/.job-system/user_state.db, override with $JOB_USER_STATE_DB), so
+CI rewriting state/jobs.db cannot destroy application history.
 """
 from __future__ import annotations
 
@@ -76,9 +83,18 @@ def main(argv: list[str] | None = None) -> int:
     m = sub.add_parser("metrics", help="application outcome metrics")
     m.add_argument("--days", type=int, default=None)
 
+    o = sub.add_parser("observe", help="read-only observation snapshot")
+    o.add_argument("--days", type=int, default=None)
+    o.add_argument("--json", action="store_true", help="emit JSON only")
+
+    sub.add_parser("backup", help="timestamped backup of the user-state database")
+    sub.add_parser("where", help="show which databases are in use")
+
     args = p.parse_args(argv)
     cfg = Config.load(args.config)
-    db = Database(cfg.database.path)
+    # Read-only on the discovery DB: user actions read jobs and scores from it
+    # but must never modify it. All writes land in the attached user-state DB.
+    db = Database(cfg.database.path, readonly=True)
     aq = ApplicationQueue(db)
 
     try:
@@ -140,6 +156,32 @@ def main(argv: list[str] | None = None) -> int:
             label = f"{row['company']} — {row['title']}" if row else key
             print(f"{app.status}: {label}"
                   + (f"   (priority {prio}, fit {fit})" if prio is not None else ""))
+            return 0
+
+        if args.cmd == "where":
+            from .user_state import user_state_path, ENV_VAR
+            print(f"\n  discovery DB (CI-owned, read-only for user actions):\n    {cfg.database.path}")
+            print(f"\n  user-state DB (your decisions, durable):\n    {db.user_state_path}")
+            print(f"\n  override with ${ENV_VAR}\n")
+            return 0
+
+        if args.cmd == "backup":
+            from .user_state import backup as _backup
+            if not db.has_user_state:
+                print("No user-state database to back up.")
+                return 1
+            out = _backup(db.user_state_path)
+            print(f"Backup written: {out} ({out.stat().st_size} bytes)")
+            return 0
+
+        if args.cmd == "observe":
+            from .observe import snapshot, render
+            snap = snapshot(db, days=args.days)
+            if args.json:
+                import json as _json
+                print(_json.dumps(snap, indent=2, sort_keys=True))
+            else:
+                print(render(snap))
             return 0
 
         if args.cmd == "metrics":

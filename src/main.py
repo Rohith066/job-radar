@@ -761,7 +761,9 @@ def _dispatch_results(
             # without waiting for manual --applied / --interested input
             if j.resume_match >= AUTO_INTERESTED_THRESHOLD and db.is_new_job(j.key):
                 try:
-                    db.record_feedback(j.key, "interested")
+                    # System signal, not user preference: routed to the
+                    # discovery DB and excluded from preference training.
+                    db.record_feedback(j.key, "interested", origin="system")
                     log.debug("Auto-feedback 'interested' for %s — %s (match %d%%)",
                               j.company, j.title, j.resume_match)
                 except Exception:

@@ -73,6 +73,10 @@ class Application:
     screening_at_decision: Optional[int] = None
     profile_version: str = ""
     note: str = ""
+    company: str = ""
+    title: str = ""
+    url: str = ""
+    role_family: str = ""
     shortlisted_at: Optional[str] = None
     applied_at: Optional[str] = None
     outcome_at: Optional[str] = None
@@ -93,7 +97,7 @@ class ApplicationQueue:
     # ── Reads ──────────────────────────────────────────────────────────────
     def get(self, job_key: str) -> Optional[Application]:
         row = self._conn.execute(
-            "SELECT * FROM applications WHERE job_key=?", (job_key,)
+            "SELECT * FROM userstate.applications WHERE job_key=?", (job_key,)
         ).fetchone()
         return self._row_to_app(row) if row else None
 
@@ -109,7 +113,7 @@ class ApplicationQueue:
         out: dict[str, str] = {}
         for i in range(0, len(keys), 500):
             chunk = keys[i:i + 500]
-            q = f"SELECT job_key, status FROM applications WHERE job_key IN ({','.join('?' * len(chunk))})"
+            q = f"SELECT job_key, status FROM userstate.applications WHERE job_key IN ({','.join('?' * len(chunk))})"
             for r in self._conn.execute(q, chunk):
                 out[r["job_key"]] = r["status"]
         return out
@@ -117,19 +121,19 @@ class ApplicationQueue:
     def list(self, status: Optional[str] = None, limit: int = 100) -> list[Application]:
         if status:
             rows = self._conn.execute(
-                "SELECT * FROM applications WHERE status=? ORDER BY updated_at DESC LIMIT ?",
+                "SELECT * FROM userstate.applications WHERE status=? ORDER BY updated_at DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM applications ORDER BY updated_at DESC LIMIT ?", (limit,)
+                "SELECT * FROM userstate.applications ORDER BY updated_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [self._row_to_app(r) for r in rows]
 
     def excluded_keys(self) -> set[str]:
         """Job keys that should not appear in the actionable shortlist."""
         rows = self._conn.execute(
-            f"SELECT job_key FROM applications WHERE status IN "
+            f"SELECT job_key FROM userstate.applications WHERE status IN "
             f"({','.join('?' * len(TERMINAL_STATUSES))})",
             TERMINAL_STATUSES,
         ).fetchall()
@@ -148,6 +152,7 @@ class ApplicationQueue:
         profile_version: str = "",
         force: bool = False,
     ) -> Application:
+        """Record a user decision. Writes only to the user-state database."""
         if status not in STATUSES:
             raise ValueError(f"status must be one of {STATUSES}, got {status!r}")
 
@@ -158,6 +163,28 @@ class ApplicationQueue:
                 f"{current_status} -> {status} is not allowed. "
                 f"Legal next states: {sorted(_ALLOWED[current_status]) or 'none (terminal)'}"
             )
+
+        # Snapshot the job's identity so the application stays interpretable
+        # after the posting leaves the discovery database. Deliberately minimal:
+        # no description, no scores that would go stale.
+        cols = {r[1] for r in self._conn.execute("PRAGMA main.table_info(jobs)")}
+        wanted = [c for c in ("company", "title", "url", "role_family") if c in cols]
+        snap = None
+        if wanted:
+            snap = self._conn.execute(
+                f"SELECT {','.join(wanted)} FROM main.jobs WHERE key=?", (job_key,)
+            ).fetchone()
+
+        def _snap(field: str) -> str:
+            prior = getattr(current, field, "") if current else ""
+            if prior:
+                return prior
+            if snap is not None and field in wanted:
+                return snap[field] or ""
+            return ""
+
+        company, title = _snap("company"), _snap("title")
+        url, role_family = _snap("url"), _snap("role_family")
 
         now = _now()
         shortlisted_at = current.shortlisted_at if current else None
@@ -182,11 +209,12 @@ class ApplicationQueue:
         with self.db._tx() as conn:
             conn.execute(
                 """
-                INSERT INTO applications(job_key,status,priority_at_decision,fit_at_decision,
+                INSERT INTO userstate.applications(job_key,status,priority_at_decision,fit_at_decision,
                                          screening_at_decision,profile_version,note,
+                                         company,title,url,role_family,
                                          shortlisted_at,applied_at,outcome_at,
                                          created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(job_key) DO UPDATE SET
                     status=excluded.status,
                     priority_at_decision=COALESCE(applications.priority_at_decision, excluded.priority_at_decision),
@@ -194,12 +222,17 @@ class ApplicationQueue:
                     screening_at_decision=COALESCE(applications.screening_at_decision, excluded.screening_at_decision),
                     profile_version=COALESCE(NULLIF(applications.profile_version,''), excluded.profile_version),
                     note=excluded.note,
+                    company=COALESCE(NULLIF(applications.company,''), excluded.company),
+                    title=COALESCE(NULLIF(applications.title,''), excluded.title),
+                    url=COALESCE(NULLIF(applications.url,''), excluded.url),
+                    role_family=COALESCE(NULLIF(applications.role_family,''), excluded.role_family),
                     shortlisted_at=excluded.shortlisted_at,
                     applied_at=excluded.applied_at,
                     outcome_at=excluded.outcome_at,
                     updated_at=excluded.updated_at
                 """,
                 (job_key, status, priority, fit, screening, profile_version, note,
+                 company, title, url, role_family,
                  shortlisted_at, applied_at, outcome_at, now, now),
             )
 
@@ -209,12 +242,21 @@ class ApplicationQueue:
         # as three separate training samples and overweight that one job.
         action = _FEEDBACK_ACTION.get(status)
         if action and status != current_status:
+            # Written to user state, not the discovery DB: a user action must
+            # never dirty state/jobs.db. The UNIQUE(job_key, action) constraint
+            # plus this guard keep one action to exactly one preference sample.
             already = self._conn.execute(
-                "SELECT 1 FROM feedback WHERE job_key=? AND action=? LIMIT 1", (job_key, action)
+                "SELECT 1 FROM userstate.user_feedback WHERE job_key=? AND action=? LIMIT 1",
+                (job_key, action),
             ).fetchone()
             if not already:
                 try:
-                    self.db.record_feedback(job_key, action, notes=note)
+                    with self.db._tx() as conn:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO userstate.user_feedback"
+                            "(job_key,action,created_at,notes,origin) VALUES(?,?,?,?,'user')",
+                            (job_key, action, now, note),
+                        )
                 except Exception:  # secondary log; never block a status change
                     pass
 
@@ -231,7 +273,7 @@ class ApplicationQueue:
 
         counts = {s: 0 for s in STATUSES}
         for r in self._conn.execute(
-            f"SELECT status, COUNT(*) c FROM applications {where} GROUP BY status", params
+            f"SELECT status, COUNT(*) c FROM userstate.applications {where} GROUP BY status", params
         ):
             counts[r["status"]] = r["c"]
 
@@ -240,11 +282,11 @@ class ApplicationQueue:
 
         by_family = {}
         for r in self._conn.execute(
-            """SELECT j.role_family fam, COUNT(*) c,
+            """SELECT a.role_family fam, COUNT(*) c,
                       SUM(CASE WHEN a.status='INTERVIEW' THEN 1 ELSE 0 END) iv
-               FROM applications a JOIN jobs j ON j.key = a.job_key
+               FROM userstate.applications a
                WHERE a.status IN ('APPLIED','INTERVIEW','REJECTED','NO_RESPONSE')
-               GROUP BY j.role_family"""
+               GROUP BY a.role_family"""
         ):
             by_family[r["fam"] or "unknown"] = {"applications": r["c"], "interviews": r["iv"] or 0}
 
@@ -258,7 +300,7 @@ class ApplicationQueue:
                         ELSE 'LOW' END AS band,
                       COUNT(*) c,
                       SUM(CASE WHEN status='INTERVIEW' THEN 1 ELSE 0 END) iv
-               FROM applications
+               FROM userstate.applications
                WHERE status IN ('APPLIED','INTERVIEW','REJECTED','NO_RESPONSE')
                  AND priority_at_decision IS NOT NULL
                GROUP BY band"""
@@ -266,7 +308,7 @@ class ApplicationQueue:
             by_band[r["band"]] = {"applications": r["c"], "interviews": r["iv"] or 0}
 
         avg = self._conn.execute(
-            """SELECT AVG(priority_at_decision) a FROM applications
+            """SELECT AVG(priority_at_decision) a FROM userstate.applications
                WHERE status IN ('APPLIED','INTERVIEW','REJECTED','NO_RESPONSE')
                  AND priority_at_decision IS NOT NULL"""
         ).fetchone()["a"]
@@ -291,6 +333,10 @@ class ApplicationQueue:
             screening_at_decision=row["screening_at_decision"],
             profile_version=(row["profile_version"] if "profile_version" in row.keys() else "") or "",
             note=row["note"] or "",
+            company=row["company"] if "company" in row.keys() else "",
+            title=row["title"] if "title" in row.keys() else "",
+            url=row["url"] if "url" in row.keys() else "",
+            role_family=row["role_family"] if "role_family" in row.keys() else "",
             shortlisted_at=row["shortlisted_at"], applied_at=row["applied_at"],
             outcome_at=row["outcome_at"], updated_at=row["updated_at"],
         )

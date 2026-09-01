@@ -40,8 +40,10 @@ def db(tmp_path):
 
 
 def _actions(db, key):
+    """Actions visible to the preference model — legacy + user state, deduped."""
     return [r[0] for r in db._conn.execute(
-        "SELECT action FROM feedback WHERE job_key=? ORDER BY created_at", (key,))]
+        f"SELECT action FROM ({db._feedback_union_sql()}) WHERE job_key=? ORDER BY created_at",
+        (key,))]
 
 
 # ── Feedback mapping semantics ────────────────────────────────────────────
