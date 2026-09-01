@@ -136,6 +136,16 @@ UNRELATED_FAMILIES: tuple[str, ...] = (
     "manufacturing", "machinist", "welder", "electrician", "operator",
     "driver", "custodian", "nurse", "accountant", "attorney", "paralegal",
     "teacher", "barista", "cashier", "stocker", "picker", "packer",
+    # Clerical data entry. It reached an actionable band because "data" is a
+    # technical hint and "associate"/"entry level" are entry markers, so the
+    # title landed in the unclassified-technical bucket instead of being
+    # excluded. This one phrase catches all 35 such titles in production
+    # (`_phrase_re` also matches "data-entry"). Broader wording — "data input",
+    # "data capture", "data processor" — was tried and rejected: it wrongly
+    # excluded Data Capture Engineer, Data Input Pipeline Engineer and
+    # Data Processor Architect. The defect is clerical data-entry work, not
+    # any title containing generic words about handling data.
+    "data entry",
 )
 
 # Restored verbatim from the pre-Phase-1 classifier. These are domains the
@@ -149,8 +159,23 @@ PROFILE_MISMATCH: tuple[str, ...] = (
     "mechanical engineer",
     # Domain forms of the same exclusions — the pre-Phase-1 list matched as a
     # substring, so "Robotics Research" and "Computer Vision" were caught by
-    # the bare terms too.
+    # the bare terms too. Robotics morphology is handled by _ROBOTICS_RE below
+    # rather than by bare "robot"/"robotic" phrases, which wrongly swallowed
+    # Robotic Process Automation.
     "robotics", "computer vision",
+)
+
+# Robotics as a domain, in the spellings postings actually use: "Robotics",
+# "Human-Robot Interaction", "Robot Intelligence", "Robotic Systems". Phrase
+# matching is boundary-anchored, so "robotics" alone missed every variant that
+# drops the -ics.
+#
+# The carve-out matters: Robotic Process Automation is business workflow
+# tooling, not the robotics research and hardware domain this exclusion was
+# written for, and it must not be rejected for sharing a word stem.
+_ROBOTICS_RE = re.compile(
+    r"(?<![a-z0-9])robot(?:ics|ic|s)?(?![a-z0-9])(?!\s*process\s+automation)",
+    re.IGNORECASE,
 )
 
 # Words that mark a title as technical even when no family phrase matched.
@@ -299,7 +324,7 @@ _UNRELATED_RES = tuple(_phrase_re(p) for p in UNRELATED_FAMILIES)
 _ADJACENT_RES = {
     fam: tuple(_phrase_re(p) for p in phrases) for fam, phrases in ADJACENT_FAMILIES.items()
 }
-_PROFILE_MISMATCH_RES = tuple(_phrase_re(p) for p in PROFILE_MISMATCH)
+_PROFILE_MISMATCH_RES = tuple(_phrase_re(p) for p in PROFILE_MISMATCH) + (_ROBOTICS_RE,)
 
 
 def _detect_family(t: str) -> tuple[str, str]:

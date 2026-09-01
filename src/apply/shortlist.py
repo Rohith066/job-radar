@@ -88,9 +88,25 @@ def evaluate_job(row: dict, resume_skills: set[str]) -> Optional[QueueEntry]:
 
 
 def build_queue(db, *, limit: int = DEFAULT_LIMIT, resume_text: str = "",
-                include_acted: bool = False, max_per_company: int = MAX_PER_COMPANY) -> list[QueueEntry]:
-    """Rank eligible, un-acted-on jobs by application priority."""
+                include_acted: bool = False, max_per_company: int = MAX_PER_COMPANY,
+                enforce_age: bool = True) -> list[QueueEntry]:
+    """Rank eligible, un-acted-on jobs by application priority.
+
+    Applies the same job-age policy Phase 1 alerting uses. Without it the queue
+    ranked the whole stored history, so 7 of the 15 default slots were filled
+    with postings Phase 1 would never have alerted on — the application
+    interface and the alert stream were describing different populations.
+
+    The age rule is not re-implemented here: `_is_too_old` and
+    `MAX_JOB_AGE_DAYS` are imported from the orchestrator, so the queue tracks
+    the configured policy automatically, including its treatment of undated
+    postings. `enforce_age=False` is for shadow analysis only and must not be
+    used for the actionable queue.
+    """
     from ..resume_matcher import load_resume, _resume_path_from_env
+    # Imported inside the function: src.main imports this package, so a
+    # module-level import would be circular.
+    from ..main import _is_too_old
 
     resume_text = resume_text or load_resume(_resume_path_from_env())
     resume_skills = set(ontology.extract_canonical_skills(resume_text)) if resume_text else set()
@@ -109,6 +125,9 @@ def build_queue(db, *, limit: int = DEFAULT_LIMIT, resume_text: str = "",
     for r in rows:
         row = dict(r)
         if row["key"] in excluded:
+            continue
+        # Same eligibility gate as Phase 1 alerting.
+        if enforce_age and _is_too_old(row.get("posted") or ""):
             continue
         e = evaluate_job(row, resume_skills)
         if e and e.priority.is_actionable:
