@@ -85,6 +85,27 @@ CREATE TABLE IF NOT EXISTS feedback (
     notes      TEXT NOT NULL DEFAULT ''
 );
 
+-- Phase 2 application queue. Deliberately separate from `feedback`: that
+-- table stays the append-only event log (and the ML re-scorer's training
+-- data), while this one holds the current derived status plus the score
+-- snapshot taken when the user decided.
+CREATE TABLE IF NOT EXISTS applications (
+    job_key               TEXT PRIMARY KEY,
+    status                TEXT NOT NULL DEFAULT 'NEW',
+    priority_at_decision  INTEGER,
+    fit_at_decision       INTEGER,
+    screening_at_decision INTEGER,
+    note                  TEXT NOT NULL DEFAULT '',
+    -- Which candidate configuration produced the scores above. Resumes change;
+    -- without this a snapshot cannot be compared to a later recomputation.
+    profile_version       TEXT NOT NULL DEFAULT '',
+    shortlisted_at        TEXT,
+    applied_at            TEXT,
+    outcome_at            TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
 CREATE INDEX IF NOT EXISTS idx_jobs_label  ON jobs(label);
 CREATE INDEX IF NOT EXISTS idx_boards_platform ON boards(platform);
@@ -136,6 +157,19 @@ class Database:
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {definition}")
                 log.debug("DB migration: added column jobs.%s", col)
+
+        # Phase 2: application queue. CREATE TABLE IF NOT EXISTS in CREATE_SQL
+        # already handles both new and existing databases, so only the indexes
+        # need adding here — and they must come after the table exists.
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)"
+        )
+        # Additive column for databases created before provenance was recorded.
+        app_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(applications)")}
+        if "profile_version" not in app_cols:
+            self._conn.execute(
+                "ALTER TABLE applications ADD COLUMN profile_version TEXT NOT NULL DEFAULT ''"
+            )
 
         # Indexes on migrated columns must be created after the ALTER TABLEs.
         # On a pre-existing database the CREATE TABLE in CREATE_SQL is a no-op,
@@ -449,10 +483,23 @@ class Database:
         return row[0] if row else 0
 
     def get_followup_due(self, days: int = 7) -> list[dict]:
-        """Return jobs you applied to >= days ago with no follow-up action recorded.
+        """Return jobs applied to >= days ago that still need a follow-up.
 
-        Filters out jobs that already have a 'followed_up', 'responded',
-        'rejected', or 'offer' feedback entry after the 'applied' entry.
+        Eligibility has two paths, because the application queue was added
+        after this method:
+
+        * **Job has an `applications` row** — that status is authoritative.
+          Only APPLIED can be due. This is what stops a job the user explicitly
+          marked NO_RESPONSE from being suggested for follow-up forever: the
+          queue records that outcome, but writing a feedback event for it would
+          mean inventing an action the preference model does not understand.
+
+        * **No `applications` row** (historical jobs) — the original
+          feedback-only rule applies unchanged: due unless a 'followed_up',
+          'responded', 'rejected' or 'offer' event followed the 'applied' one.
+
+        Read-only: this method never writes a feedback event, so ML training
+        semantics are untouched.
         """
         from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
@@ -468,14 +515,18 @@ class Database:
                    j.salary
             FROM   feedback f
             JOIN   jobs j ON j.key = f.job_key
+            LEFT   JOIN applications a ON a.job_key = f.job_key
             WHERE  f.action = 'applied'
               AND  f.created_at <= ?
-              AND  NOT EXISTS (
-                       SELECT 1 FROM feedback f2
-                       WHERE  f2.job_key = f.job_key
-                         AND  f2.action IN ('followed_up','responded','rejected','offer')
-                         AND  f2.created_at > f.created_at
-                   )
+              AND  CASE
+                       WHEN a.status IS NOT NULL THEN a.status = 'APPLIED'
+                       ELSE NOT EXISTS (
+                                SELECT 1 FROM feedback f2
+                                WHERE  f2.job_key = f.job_key
+                                  AND  f2.action IN ('followed_up','responded','rejected','offer')
+                                  AND  f2.created_at > f.created_at
+                            )
+                   END
             ORDER  BY f.created_at ASC
             """,
             (cutoff,),

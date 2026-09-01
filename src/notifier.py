@@ -233,6 +233,7 @@ _JOB_CARD = """\
 <div class="job-card job-card-{label}">
   {ghost_banner}
   <p style="margin:0 0 4px;">{priority_badge}{fit_headline}{freshness_badge}</p>
+  {fit_block}
   <p class="job-title">{company} &mdash; {title}
     <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}{match_badge}
   </p>
@@ -272,6 +273,47 @@ def _priority_badge_html(job: Job) -> str:
     )
 
 
+_APPLY_STYLE = {
+    "APPLY_FIRST": ("#dc2626", "#fee2e2", "&#128293; APPLY FIRST"),
+    "HIGH":        ("#15803d", "#dcfce7", "HIGH"),
+    "MEDIUM":      ("#a16207", "#fef9c3", "MEDIUM"),
+}
+
+
+def _fit_block_html(job: Job) -> str:
+    """Resume-fit detail, shown only for jobs worth acting on first.
+
+    Deliberately absent from ordinary REVIEW cards: the point of the band is
+    that the top of the email stays short enough to act on.
+    """
+    ap = getattr(job, "application_priority", "") or ""
+    if ap not in _APPLY_STYLE:
+        return ""
+    import html as _html
+    fg, bg, label = _APPLY_STYLE[ap]
+    aps = getattr(job, "application_priority_score", 0) or 0
+    scr = getattr(job, "opportunity_score", 0) or 0
+    fit = getattr(job, "resume_fit_score", 0) or 0
+    hit = [_html.escape(s) for s in (getattr(job, "fit_matched_required", []) or [])[:5]]
+    miss_r = [_html.escape(s) for s in (getattr(job, "fit_missing_required", []) or [])[:3]]
+    miss_p = [_html.escape(s) for s in (getattr(job, "fit_missing_preferred", []) or [])[:3]]
+
+    rows = (f'<div style="font-size:12px;color:#444;margin-top:2px;">'
+            f'Screening <b>{scr}</b> &middot; Resume fit <b>{fit}</b> '
+            f'&middot; Application priority <b>{aps}</b></div>')
+    if hit:
+        rows += ('<div style="font-size:12px;color:#15803d;margin-top:3px;">&#10003; '
+                 + ", ".join(hit) + "</div>")
+    gaps = miss_r + [f"{m} (preferred)" for m in miss_p]
+    if gaps:
+        rows += ('<div style="font-size:12px;color:#a16207;margin-top:2px;">&#9651; '
+                 + ", ".join(gaps) + "</div>")
+    return (f'<div style="border-left:3px solid {fg};background:{bg};padding:7px 10px;'
+            f'margin:7px 0;border-radius:3px;">'
+            f'<span style="font-size:11px;font-weight:700;color:{fg};">{label} &middot; {aps}/100</span>'
+            f'{rows}</div>')
+
+
 def _why_html(job: Job) -> str:
     """Render the reason codes behind this job's score.
 
@@ -305,6 +347,7 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
         posted_str      = _posted_friendly(job.posted)
         priority_badge  = _priority_badge_html(job)
         why_block       = _why_html(job)
+        fit_block       = _fit_block_html(job)
 
         # Work-type badge
         wt = (job.work_type or "").strip()
@@ -433,6 +476,7 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             freshness_badge=freshness_badge,
             priority_badge=priority_badge,
             why_block=why_block,
+            fit_block=fit_block,
             fit_headline=fit_headline,
             skills_section=skills_section,
             posted_friendly=posted_str,
@@ -574,6 +618,19 @@ def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job], source_errors: 
         ]
         if pri_line:
             out.append(pri_line)
+        ap = getattr(j, "application_priority", "") or ""
+        if ap in ("APPLY_FIRST", "HIGH", "MEDIUM"):
+            aps = getattr(j, "application_priority_score", 0) or 0
+            fitv = getattr(j, "resume_fit_score", 0) or 0
+            out.append(f"  {ap} {aps}/100  (screening {getattr(j,'opportunity_score',0)} "
+                       f"| resume fit {fitv})")
+            hit = (getattr(j, "fit_matched_required", []) or [])[:5]
+            if hit:
+                out.append("    + " + ", ".join(hit))
+            gaps = list((getattr(j, "fit_missing_required", []) or [])[:2]) + \
+                   [f"{m} (preferred)" for m in (getattr(j, "fit_missing_preferred", []) or [])[:2]]
+            if gaps:
+                out.append("    ~ " + ", ".join(gaps))
         out.append(f"  Fit: {rm}%  {j.url}")
         out.extend(why)
         out.append("")

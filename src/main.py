@@ -34,6 +34,8 @@ from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNo
 from .sources.base import Job, job_fingerprint
 from .screening import analyze_title, analyze_location, analyze_experience, score_job
 from .screening.scoring import APPLY_NOW, STRONG, REVIEW, LOW, REJECT
+from .apply.fit import analyze_fit
+from .apply.priority import application_priority
 from .utils.salary import detect_work_type, salary_passes_filter
 from .ml.scorer import ml_rescore, get_model_info
 from .dashboard import run_dashboard
@@ -840,6 +842,45 @@ def _dispatch_results(
     if rejected:
         log.info("Screening: rejected %d job(s) on seniority / experience / location", rejected)
     matched = scored
+
+    # ── Phase 2 resume-aware prioritization ────────────────────────────────
+    # Screening decided eligibility; this decides which eligible job is worth
+    # applying to first. The two verdicts stay as separate fields on the Job.
+    try:
+        from .matching import ontology as _ont
+        from .resume_matcher import load_resume as _load, _resume_path_from_env as _rp
+        _resume = _load(_rp())
+        _rskills = set(_ont.extract_canonical_skills(_resume)) if _resume else set()
+    except Exception:
+        _rskills = set()
+
+    for j in matched:
+        jd = getattr(j, "description", "") or ""
+        try:
+            jd_can = _ont.extract_canonical_skills(jd) if (jd and _rskills) else {}
+        except Exception:
+            jd_can = {}
+        fit = analyze_fit(
+            jd_text=jd,
+            matched_canonicals={c for c in jd_can if c in _rskills},
+            role_family=getattr(j, "role_family", ""),
+            experience_min=getattr(j, "experience_min", None),
+            matcher_score=getattr(j, "resume_match", 0) or 0,
+        )
+        ap = application_priority(
+            screening_score=getattr(j, "opportunity_score", 0) or 0,
+            screening_priority=getattr(j, "priority", "") or LOW,
+            fit=fit,
+            role_family=getattr(j, "role_family", ""),
+            location_class=getattr(j, "location_class", ""),
+            ghost_level=getattr(j, "ghost_level", "") or "",
+        )
+        j.resume_fit_score = fit.resume_fit_score
+        j.application_priority = ap.priority
+        j.application_priority_score = ap.application_priority_score
+        j.fit_matched_required = list(fit.matched_required_skills)[:6]
+        j.fit_missing_required = list(fit.missing_required_skills)[:4]
+        j.fit_missing_preferred = list(fit.missing_preferred_skills)[:4]
 
     buckets = Counter(j.priority for j in matched)
     log.info(

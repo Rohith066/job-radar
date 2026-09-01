@@ -48,6 +48,13 @@ class Job:
     experience_min: int | None = None
     experience_max: int | None = None
     classification_reasons: list = field(default_factory=list)  # reason codes
+    # ── Phase 2 — resume-aware prioritization ────────────────────────────────
+    resume_fit_score: int = 0        # 0-100 fit of the resume against this JD
+    application_priority: str = ""   # APPLY_FIRST | HIGH | MEDIUM | REVIEW | LOW
+    application_priority_score: int = 0
+    fit_matched_required: list = field(default_factory=list)
+    fit_missing_required: list = field(default_factory=list)
+    fit_missing_preferred: list = field(default_factory=list)
 
 
 def make_location(parts: list[Optional[str]]) -> str:
