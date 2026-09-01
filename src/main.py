@@ -31,7 +31,9 @@ from .profile import skill_bonus
 from .config import Config
 from .database import Database
 from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNotifier
-from .sources.base import Job, is_us_location, job_fingerprint
+from .sources.base import Job, job_fingerprint
+from .screening import analyze_title, analyze_location, analyze_experience, score_job
+from .screening.scoring import APPLY_NOW, STRONG, REVIEW, LOW, REJECT
 from .utils.salary import detect_work_type, salary_passes_filter
 from .ml.scorer import ml_rescore, get_model_info
 from .dashboard import run_dashboard
@@ -111,7 +113,15 @@ def load_boards_csv(path: str) -> list[dict]:
                 continue
             if not company or not platform or not url:
                 continue
-            rows.append({"company": company, "platform": platform, "board_url": url.rstrip("/")})
+            # country_focus ("US" | "Global" | "") is board-level metadata that
+            # resolves otherwise-ambiguous job locations — a bare "Remote" on a
+            # US-focused board is US Remote. It was previously dropped here.
+            rows.append({
+                "company": company,
+                "platform": platform,
+                "board_url": url.rstrip("/"),
+                "country_focus": (r.get("country_focus") or "").strip(),
+            })
 
     # Deduplicate on (platform, url)
     seen: set[tuple] = set()
@@ -280,6 +290,52 @@ def fit_rank_key(j: "Job") -> tuple:
     dt = _parse_posted(j.posted)
     ts = dt.timestamp() if dt else 0.0
     return (0 if rm > 0 else 1, -rm, -ts)
+
+
+PRIORITY_ORDER = {APPLY_NOW: 0, STRONG: 1, REVIEW: 2, LOW: 3, REJECT: 4}
+
+
+def screen_job(j: "Job"):
+    """Run the full Phase 1 screening for one job and record its findings.
+
+    Pure with respect to the network and the database — everything it needs is
+    already on the Job. Also writes the structured sub-verdicts back onto the
+    job so the email and the DB can show them without recomputing.
+    """
+    title = analyze_title(j.title)
+    location = analyze_location(j.location, getattr(j, "country_focus", ""))
+    experience = analyze_experience(getattr(j, "description", "") or "")
+
+    j.seniority      = title.seniority
+    j.role_family    = title.role_family
+    j.location_class = location.classification
+    j.experience_min = experience.min_years
+    j.experience_max = experience.max_years
+
+    return score_job(
+        title=title,
+        location=location,
+        experience=experience,
+        posted_at=_parse_posted(j.posted),
+    )
+
+
+def priority_rank_key(j: "Job") -> tuple:
+    """Sort key for alert ordering: priority band, then opportunity score,
+    then resume fit, then recency.
+
+    Freshness stays a tiebreaker rather than a term in the ranking number, for
+    the same reason `fit_rank_key` keeps it out of the fit score: the bands are
+    only meaningful if the number they gate is stable.
+    """
+    dt = _parse_posted(j.posted)
+    ts = dt.timestamp() if dt else 0.0
+    return (
+        PRIORITY_ORDER.get(getattr(j, "priority", "") or LOW, 3),
+        -(getattr(j, "opportunity_score", 0) or 0),
+        -(getattr(j, "resume_match", 0) or 0),
+        -ts,
+    )
 
 
 def _is_too_old(posted: str, max_days: int = MAX_JOB_AGE_DAYS) -> bool:
@@ -578,6 +634,12 @@ def _process_one_board(b: dict, db: Database, timeout: int) -> tuple[list[Job], 
             return [], None
 
         db.upsert_board(board_id=board_id, platform=platform, company=company, url=url, job_count=len(jobs))
+        # Attach board metadata here rather than inside each ATS adapter, so
+        # the four source classes need no change.
+        focus = b.get("country_focus") or ""
+        if focus:
+            for j in jobs:
+                j.country_focus = focus
         return jobs, None
 
     except requests.HTTPError as exc:
@@ -608,13 +670,25 @@ def _dispatch_results(
     test_notify: bool,
     cfg: Config,
 ) -> None:
-    # Filter by classification + location
-    matched = [
-        j for j in all_jobs
-        if j.label in ("yes", "maybe") and (
-            not cfg.filter.require_us_location or is_us_location(j.location)
-        )
-    ]
+    # Filter by classification + location.
+    #
+    # Location is now a four-way verdict rather than a boolean. Only a
+    # CONFIRMED non-US location is dropped; AMBIGUOUS survives into scoring and
+    # carries a warning, because discarding a job that merely *might* be US
+    # costs an application, which is the thing this system exists to produce.
+    matched = []
+    non_us_dropped = 0
+    for j in all_jobs:
+        if j.label not in ("yes", "maybe"):
+            continue
+        loc = analyze_location(j.location, getattr(j, "country_focus", ""))
+        j.location_class = loc.classification
+        if cfg.filter.require_us_location and not loc.is_plausibly_us:
+            non_us_dropped += 1
+            continue
+        matched.append(j)
+    if non_us_dropped:
+        log.info("Location filter: dropped %d confirmed non-US job(s)", non_us_dropped)
 
     # Age filter — drop listings older than MAX_JOB_AGE_DAYS
     before_age = len(matched)
@@ -743,12 +817,46 @@ def _dispatch_results(
     # Skipped automatically if fewer than 10 feedback entries exist (cold start)
     matched = ml_rescore(matched, db=db)
 
-    # Sort by recency first (newest at top), score as tiebreaker —
-    # being early to apply matters more than score ordering
-    yes_jobs   = sorted([j for j in matched if j.label == "yes"],   key=fit_rank_key)
-    maybe_jobs = sorted([j for j in matched if j.label == "maybe"],  key=fit_rank_key)
+    # ── Phase 1 opportunity scoring ────────────────────────────────────────
+    # Runs here, after JD descriptions have been fetched, so experience
+    # extraction has text to work with. The verdict is deterministic and every
+    # point is attributable to a reason code.
+    #
+    # Hard exclusions inside score_job() short-circuit before any arithmetic,
+    # which is what stops a fresh posting or a strong resume match from lifting
+    # a senior or managerial title back into an alert — the exact failure that
+    # left 552 manager/director/VP roles alerting under the old score cap.
+    scored = []
+    rejected = 0
+    for j in matched:
+        opp = screen_job(j)
+        j.opportunity_score      = opp.score
+        j.priority               = opp.priority
+        j.classification_reasons = list(opp.reason_codes)
+        if opp.priority == REJECT:
+            rejected += 1
+            continue
+        scored.append(j)
+    if rejected:
+        log.info("Screening: rejected %d job(s) on seniority / experience / location", rejected)
+    matched = scored
 
-    log.info("Matched: %d yes, %d maybe", len(yes_jobs), len(maybe_jobs))
+    buckets = Counter(j.priority for j in matched)
+    log.info(
+        "Priority: %d APPLY_NOW, %d STRONG, %d REVIEW, %d LOW",
+        buckets.get(APPLY_NOW, 0), buckets.get(STRONG, 0),
+        buckets.get(REVIEW, 0), buckets.get(LOW, 0),
+    )
+
+    # Alert routing. APPLY_NOW and STRONG share the immediate section; REVIEW
+    # goes to the review digest; LOW is persisted as seen but never alerted, so
+    # it stops generating noise without being forgotten.
+    yes_jobs   = sorted([j for j in matched if j.priority in (APPLY_NOW, STRONG)],
+                        key=priority_rank_key)
+    maybe_jobs = sorted([j for j in matched if j.priority == REVIEW],
+                        key=priority_rank_key)
+
+    log.info("Alerting: %d strong, %d review", len(yes_jobs), len(maybe_jobs))
 
     # Summarise source errors for the email footer
     source_errors = [e for e in errors if e]
@@ -794,6 +902,14 @@ def _dispatch_results(
                 salary=getattr(j, "salary", ""),
                 resume_match=getattr(j, "resume_match", 0),
                 description=getattr(j, "description", ""),
+                opportunity_score=getattr(j, "opportunity_score", 0),
+                priority=getattr(j, "priority", ""),
+                location_class=getattr(j, "location_class", ""),
+                seniority=getattr(j, "seniority", ""),
+                role_family=getattr(j, "role_family", ""),
+                experience_min=getattr(j, "experience_min", None),
+                experience_max=getattr(j, "experience_max", None),
+                classification_reasons=getattr(j, "classification_reasons", []),
             )
         log.debug("Saved %d jobs to database.", len(matched))
 

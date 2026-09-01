@@ -232,11 +232,12 @@ _HTML_TEMPLATE = """\
 _JOB_CARD = """\
 <div class="job-card job-card-{label}">
   {ghost_banner}
-  <p style="margin:0 0 4px;">{fit_headline}{freshness_badge}</p>
+  <p style="margin:0 0 4px;">{priority_badge}{fit_headline}{freshness_badge}</p>
   <p class="job-title">{company} &mdash; {title}
     <span class="score-badge badge-{label}">Score {score}</span>{work_type_badge}{match_badge}
   </p>
   <p class="job-meta">{location} &middot; {posted_friendly}{salary_line}</p>
+  {why_block}
   {skills_section}
   {highlights_section}
   {dm_section}
@@ -246,6 +247,49 @@ _JOB_CARD = """\
 _SECTION = """\
 <div class="section-title {cls}">{heading} ({count})</div>
 {cards}"""
+
+
+_PRIORITY_STYLE = {
+    "APPLY_NOW": ("#dc2626", "#fee2e2", "&#128293; APPLY NOW"),
+    "STRONG":    ("#15803d", "#dcfce7", "&#9989; STRONG"),
+    "REVIEW":    ("#a16207", "#fef9c3", "&#128269; REVIEW"),
+    "LOW":       ("#6b7280", "#f3f4f6", "LOW"),
+}
+
+
+def _priority_badge_html(job: Job) -> str:
+    """Badge showing the deterministic opportunity score and its band."""
+    priority = getattr(job, "priority", "") or ""
+    style = _PRIORITY_STYLE.get(priority)
+    if not style:
+        return ""
+    fg, bg, label = style
+    score = getattr(job, "opportunity_score", 0) or 0
+    return (
+        f'<span style="display:inline-block;padding:2px 8px;border-radius:4px;'
+        f'font-size:11px;font-weight:700;color:{fg};background:{bg};'
+        f'margin-right:6px;">{label} &middot; {score}/100</span>'
+    )
+
+
+def _why_html(job: Job) -> str:
+    """Render the reason codes behind this job's score.
+
+    Requirement: the system never emits a score with no supporting reasons.
+    """
+    from .screening.reasons import describe
+    codes = getattr(job, "classification_reasons", None) or []
+    if not codes:
+        return ""
+    import html as _html
+    items = "".join(
+        f'<li style="margin:1px 0;">{_html.escape(describe(c))}</li>' for c in codes[:8]
+    )
+    return (
+        '<div style="margin-top:6px;font-size:12px;color:#555;">'
+        '<span style="font-weight:600;">Why this score:</span>'
+        f'<ul style="margin:3px 0 0 16px;padding:0;">{items}</ul></div>'
+    )
 
 
 def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_errors: list[str] | None = None) -> str:
@@ -259,6 +303,8 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
         # Freshness
         freshness_badge = _freshness_badge_html(job.posted)
         posted_str      = _posted_friendly(job.posted)
+        priority_badge  = _priority_badge_html(job)
+        why_block       = _why_html(job)
 
         # Work-type badge
         wt = (job.work_type or "").strip()
@@ -385,6 +431,8 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
             score=job.score,
             location=_html.escape(job.location),
             freshness_badge=freshness_badge,
+            priority_badge=priority_badge,
+            why_block=why_block,
             fit_headline=fit_headline,
             skills_section=skills_section,
             posted_friendly=posted_str,
@@ -400,14 +448,14 @@ def _build_html(yes_jobs: list[Job], maybe_jobs: list[Job], mode: str, source_er
     yes_section = ""
     if yes_jobs:
         yes_section = _SECTION.format(
-            cls="yes-title", heading="Strong Matches", count=len(yes_jobs),
+            cls="yes-title", heading="Apply Now / Strong", count=len(yes_jobs),
             cards="\n".join(_card(j) for j in yes_jobs),
         )
 
     maybe_section = ""
     if maybe_jobs:
         maybe_section = _SECTION.format(
-            cls="maybe-title", heading="Review Needed", count=len(maybe_jobs),
+            cls="maybe-title", heading="Review", count=len(maybe_jobs),
             cards="\n".join(_card(j) for j in maybe_jobs),
         )
 
@@ -514,19 +562,29 @@ def _build_plaintext(yes_jobs: list[Job], maybe_jobs: list[Job], source_errors: 
         sal = f" | {j.salary}"    if j.salary    else ""
         rm  = getattr(j, "resume_match", 0)
         match_str = f" | Match {rm}%" if rm > 0 else ""
-        return [
+        priority = getattr(j, "priority", "") or ""
+        opp      = getattr(j, "opportunity_score", 0) or 0
+        pri_line = f"  {opp}/100  {priority.replace('_', ' ')}" if priority else ""
+        from .screening.reasons import describe
+        codes = getattr(j, "classification_reasons", None) or []
+        why = [f"    - {describe(c)}" for c in codes[:6]]
+        out = [
             f"[{j.company}] {j.title}{fresh_tag}",
             f"  {j.location}{wt} | Posted: {posted}{sal}{match_str}",
-            f"  Score: {j.score}  {j.url}",
-            "",
         ]
+        if pri_line:
+            out.append(pri_line)
+        out.append(f"  Fit: {rm}%  {j.url}")
+        out.extend(why)
+        out.append("")
+        return out
 
     if yes_jobs:
-        lines.append(f"=== STRONG MATCHES ({len(yes_jobs)}) ===\n")
+        lines.append(f"=== APPLY NOW / STRONG ({len(yes_jobs)}) ===\n")
         for j in yes_jobs:
             lines.extend(_txt_job(j))
     if maybe_jobs:
-        lines.append(f"\n=== REVIEW NEEDED ({len(maybe_jobs)}) ===\n")
+        lines.append(f"\n=== REVIEW ({len(maybe_jobs)}) ===\n")
         for j in maybe_jobs:
             lines.extend(_txt_job(j))
     if source_errors:

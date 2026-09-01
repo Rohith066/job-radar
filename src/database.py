@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     salary       TEXT NOT NULL DEFAULT '',
     resume_match INTEGER NOT NULL DEFAULT 0,
     description  TEXT NOT NULL DEFAULT '',
+    opportunity_score      INTEGER NOT NULL DEFAULT 0,
+    priority               TEXT NOT NULL DEFAULT '',
+    location_class         TEXT NOT NULL DEFAULT '',
+    seniority              TEXT NOT NULL DEFAULT '',
+    role_family            TEXT NOT NULL DEFAULT '',
+    experience_min         INTEGER,
+    experience_max         INTEGER,
+    classification_reasons TEXT NOT NULL DEFAULT '',
     first_seen   TEXT NOT NULL,
     last_seen    TEXT NOT NULL
 );
@@ -107,11 +115,35 @@ class Database:
             "salary":       "TEXT NOT NULL DEFAULT ''",
             "resume_match": "INTEGER NOT NULL DEFAULT 0",
             "description":  "TEXT NOT NULL DEFAULT ''",
+            # ── Phase 1 screening ────────────────────────────────────────────
+            # All nullable-or-defaulted, so a database written by the previous
+            # version opens unchanged and rows written before this migration
+            # keep working with an empty priority / zero score.
+            "opportunity_score":      "INTEGER NOT NULL DEFAULT 0",
+            "priority":               "TEXT NOT NULL DEFAULT ''",
+            "location_class":         "TEXT NOT NULL DEFAULT ''",
+            "seniority":              "TEXT NOT NULL DEFAULT ''",
+            "role_family":            "TEXT NOT NULL DEFAULT ''",
+            "experience_min":         "INTEGER",
+            "experience_max":         "INTEGER",
+            # Reason codes, stored as a compact comma-separated list. Codes are
+            # short and bounded; the JD text itself is deliberately NOT
+            # duplicated here — description storage is already the dominant
+            # contributor to DB size and this file is committed to git hourly.
+            "classification_reasons": "TEXT NOT NULL DEFAULT ''",
         }
         for col, definition in additions.items():
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {definition}")
                 log.debug("DB migration: added column jobs.%s", col)
+
+        # Indexes on migrated columns must be created after the ALTER TABLEs.
+        # On a pre-existing database the CREATE TABLE in CREATE_SQL is a no-op,
+        # so an index declared there would reference a column that does not
+        # exist yet and abort the whole script.
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority)"
+        )
 
     def close(self) -> None:
         self._conn.close()
@@ -150,14 +182,26 @@ class Database:
         salary: str = "",
         resume_match: int = 0,
         description: str = "",
+        opportunity_score: int = 0,
+        priority: str = "",
+        location_class: str = "",
+        seniority: str = "",
+        role_family: str = "",
+        experience_min: int | None = None,
+        experience_max: int | None = None,
+        classification_reasons: list[str] | None = None,
     ) -> None:
         now = _now()
+        reasons_csv = ",".join(classification_reasons or [])
         with self._tx() as conn:
             conn.execute(
                 """
                 INSERT INTO jobs(key,source,company,title,location,url,posted,score,label,
-                                 work_type,salary,resume_match,description,first_seen,last_seen)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 work_type,salary,resume_match,description,
+                                 opportunity_score,priority,location_class,seniority,
+                                 role_family,experience_min,experience_max,
+                                 classification_reasons,first_seen,last_seen)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(key) DO UPDATE SET
                     title=excluded.title,
                     location=excluded.location,
@@ -169,10 +213,20 @@ class Database:
                     salary=excluded.salary,
                     resume_match=excluded.resume_match,
                     description=excluded.description,
+                    opportunity_score=excluded.opportunity_score,
+                    priority=excluded.priority,
+                    location_class=excluded.location_class,
+                    seniority=excluded.seniority,
+                    role_family=excluded.role_family,
+                    experience_min=excluded.experience_min,
+                    experience_max=excluded.experience_max,
+                    classification_reasons=excluded.classification_reasons,
                     last_seen=excluded.last_seen
                 """,
                 (key, source, company, title, location, url, posted, score, label,
-                 work_type, salary, resume_match, description, now, now),
+                 work_type, salary, resume_match, description,
+                 opportunity_score, priority, location_class, seniority,
+                 role_family, experience_min, experience_max, reasons_csv, now, now),
             )
 
     def source_is_bootstrapped(self, source: str) -> bool:

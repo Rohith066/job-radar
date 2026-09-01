@@ -15,8 +15,11 @@ latter wins.
 
 ## Owner context
 
-Rohith Bayya — targeting **Data Engineering** and **AI/ML Engineering**, US only,
-~3 years experience, M.S. Data Analytics Engineering (George Mason, 2025).
+Rohith Bayya — targeting **Data Engineering**, **AI/ML Engineering** and, as of
+Phase 1, **Software / Backend / Full-Stack Engineering**, US only, ~3 years
+experience, M.S. Data Analytics Engineering (George Mason, 2025).
+Early-career roles are the focus: explicit new-grad / entry-level / Engineer I
+signals score highest, and nothing at or under the 4-year ceiling is penalised.
 Needs visa sponsorship, which is why the work-authorization filter exists and is
 a hard drop rather than a score penalty.
 
@@ -26,13 +29,63 @@ The matcher scores against both and keeps the better fit.
 ## Architecture
 
 ```
-sources/ -> hard filters -> resume matcher -> ranking -> email
+sources/ -> screening gate -> hard filters -> resume matcher
+         -> opportunity scoring -> priority routing -> email
 ```
 
-**Hard filters (all before matching):** US-only location (blocks "Remote —
-Argentina"), 3-day freshness, $90k salary floor, <=4 years experience,
-staffing/agency exclusion, work authorization (citizenship / ITAR / clearance /
-explicit no-sponsorship), ghost-job detection.
+**`src/screening/` — Phase 1 entry-level screening.** Four pure functions, no
+I/O, each unit-tested in isolation:
+
+| module | answers |
+|---|---|
+| `titles.py` | role family + seniority, on token boundaries |
+| `locations.py` | US / US_REMOTE / NON_US / AMBIGUOUS |
+| `experience.py` | years required, with trap-phrase rejection |
+| `scoring.py` | 0-100 opportunity score + priority band |
+
+**Seniority is a veto, not a score cap.** This is the load-bearing decision.
+The previous classifier clamped senior titles to 65 and eight downstream
+bonuses — skill, company, resume fit, visa — then pushed them back over the
+70 alert threshold. 552 manager/director/VP roles were alerting in production
+as a result. `score_job()` short-circuits to REJECT before any arithmetic runs,
+so no accumulation of freshness or fit points can rescue a senior role.
+
+**Two scores, deliberately separate.** `resume_match` (src/matching/) measures
+skill overlap and its bands are corpus percentiles. `opportunity_score`
+(src/screening/) measures "is this an entry-level job worth applying to now".
+Folding one into the other would invalidate the other's calibration.
+
+**Hard filters (all before matching):** confirmed-non-US location (blocks
+"Remote — Argentina"; AMBIGUOUS is kept and routed to review), 3-day freshness,
+$90k salary floor, <=4 years experience, staffing/agency exclusion, work
+authorization (citizenship / ITAR / clearance / explicit no-sponsorship),
+ghost-job detection.
+
+**Role tiers** (`screening/titles.py`), matching the pre-Phase-1 semantics:
+
+| tier | families | ceiling |
+|---|---|---|
+| target | software engineering, backend, full-stack, data engineering, ML/AI, data science | APPLY_NOW |
+| secondary | data analytics | APPLY_NOW, but no family bonus |
+| adjacent (old Tier 3) | quant/research/decision/statistical/business analyst, research + AI scientist, operations research | **REVIEW** (`ADJACENT_CEILING`) |
+| unrelated | sales, QA, PM, SRE, frontend, mobile, non-engineering | never |
+| profile mismatch | robotics, computer vision, hardware, embedded, electrical, mechanical | never |
+
+Adjacent occupations are capped below STRONG on purpose: they were review-only
+before Phase 1 and must not be silently promoted. `PROFILE_MISMATCH` is
+restored verbatim from the old classifier — the owner is not searching those
+fields, and an entry-level phrase in the title must not override it.
+
+**Seniority nuances that are easy to get wrong:** `management` is a domain word
+(`Data Engineer II, Data Management Team` is an IC role) — only `manager(s)`
+denotes seniority. And `Office of the CEO/CTO` names an org unit, not the
+candidate, so those references are stripped before seniority detection.
+
+**Recall floor.** A first-class target role inside the 4-year ceiling whose
+location is an unscoped "Remote" is held at REVIEW rather than falling to LOW,
+because `W_NO_ENTRY_EVIDENCE` and the ambiguous-location penalty otherwise
+compound below the band. The floor never promotes past REVIEW and never
+reclassifies the location as US.
 
 **`src/matching/` — the hybrid matcher.** Three layers, and **the ordering is
 the design**:
@@ -96,9 +149,10 @@ python3 -m src.main --dry-run --no-notify    # safe local run
 python3 -m src.main --tailor "<job url>"     # per-JD resume cheat-sheet
 python3 -m src.main --applied "<job url>"    # log an application (feeds ML)
 python3 -m src.main --followup               # follow-up reminders
-python3 -m pytest tests/ -q                  # 66 tests
+python3 -m pytest tests/ -q                  # 351 tests
 python3 -m bench.benchmark_matching          # labelled correctness
 python3 -m bench.corpus_report --compare     # distribution, legacy vs hybrid
+python3 -m scripts.shadow_compare            # old vs new screening (read-only)
 
 pip install -r requirements-semantic.txt     # optional: enables semantic layer
 USE_HYBRID_MATCHER=0 python3 -m src.main     # fall back to legacy TF-IDF path
@@ -106,6 +160,23 @@ USE_HYBRID_MATCHER=0 python3 -m src.main     # fall back to legacy TF-IDF path
 
 `sentence-transformers` is optional by design — it pulls ~2 GB of torch and CI
 runs hourly. The matcher degrades to lexical + TF-IDF when it is absent.
+
+**Develop in a clean venv built from `requirements.txt`.** That is what CI
+installs, so it is the environment the runtime numbers describe:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m src.main --mode main --dry-run --no-notify   # ~26s
+```
+
+A local interpreter that happens to have `sentence-transformers` installed runs
+the MiniLM layer on Apple MPS, which turns a 26-second scan into 40+ minutes at
+~300% CPU (verified with `/usr/bin/sample`: the whole stack sits in
+`at::native::mps::copy_cast_kernel_mps`). That is an environment property, not a
+pipeline defect — do not "fix" it in the pipeline, and do not add
+`sentence-transformers` to CI. Note also that a system Python missing
+`beautifulsoup4` silently makes every JD fetch return an empty string, so
+experience extraction degrades without any error.
 
 ## Operational quirks
 
@@ -116,6 +187,9 @@ runs hourly. The matcher degrades to lexical + TF-IDF when it is absent.
   before assuming the local DB is current.
 - **Description retention is 30 days** (`DESCRIPTION_RETENTION_DAYS`); older
   rows keep metadata but drop JD text. Descriptions were 47 MB of a 57 MB file.
+- **`country_focus` from the board CSVs is load-bearing** for location. A bare
+  "Remote" resolves to US_REMOTE on a US-focused board and stays AMBIGUOUS
+  otherwise. `load_boards_csv` must keep the column; it used to drop it.
 - Local runs on Python 3.14 can throw `InterfaceError` from SQLite threading.
   CI runs 3.11 and is unaffected.
 - Four sources are dead (Meta, Google, Apple, Netflix) — endpoints changed.

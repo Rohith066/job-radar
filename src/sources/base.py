@@ -6,26 +6,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field  # noqa: F401 — field used by Job
 from typing import Optional
 
-US_STATE_ABBRS = frozenset({
-    "al","ak","az","ar","ca","co","ct","de","fl","ga","hi","id","il","in","ia","ks","ky","la",
-    "me","md","ma","mi","mn","ms","mo","mt","ne","nv","nh","nj","nm","ny","nc","nd","oh","ok",
-    "or","pa","ri","sc","sd","tn","tx","ut","vt","va","wa","wv","wi","wy","dc",
-})
-
-# Non-US country names / regions — any location containing these is rejected
-# even if it also contains the word "remote"
-_NON_US_COUNTRIES = frozenset({
-    "argentina", "colombia", "brazil", "brasil", "mexico", "méxico",
-    "canada", "united kingdom", "uk", "england", "scotland", "ireland",
-    "australia", "india", "germany", "france", "spain", "netherlands",
-    "poland", "portugal", "italy", "sweden", "norway", "denmark",
-    "singapore", "japan", "china", "hong kong", "new zealand",
-    "south africa", "nigeria", "kenya", "philippines", "indonesia",
-    "pakistan", "bangladesh", "sri lanka", "ukraine", "russia",
-    "israel", "turkey", "egypt", "uae", "dubai", "saudi arabia",
-    "latin america", "latam", "south america", "europe", "emea", "apac",
-})
-
+# Location vocabulary now lives in src/screening/locations.py — the sets that
+# used to sit here matched as substrings, which rejected "Milwaukee, WI" (for
+# "uk") and "Indianapolis, IN" (for "india").
 
 @dataclass
 class Job:
@@ -55,6 +38,16 @@ class Job:
     # Both are computed by the matcher already; these fields only carry them.
     matched_skills: list = field(default_factory=list)   # JD skills the resume satisfies
     missing_required: list = field(default_factory=list)  # unsatisfied REQUIRED skills
+    # ── Phase 1 screening — computed in _dispatch_results, persisted to DB ────
+    country_focus: str = ""      # board metadata from the CSV: "US" | "Global" | ""
+    opportunity_score: int = 0   # 0-100 deterministic entry-level score
+    priority: str = ""           # APPLY_NOW | STRONG | REVIEW | LOW | REJECT
+    location_class: str = ""     # US | US_REMOTE | NON_US | AMBIGUOUS
+    seniority: str = ""          # entry | ambiguous | unspecified | senior | ...
+    role_family: str = ""        # e.g. "software_engineering"
+    experience_min: int | None = None
+    experience_max: int | None = None
+    classification_reasons: list = field(default_factory=list)  # reason codes
 
 
 def make_location(parts: list[Optional[str]]) -> str:
@@ -93,37 +86,20 @@ def job_fingerprint(company: str, title: str, location: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def is_us_location(location: str) -> bool:
-    """Return True if the location string is plausibly US-based.
+def is_us_location(location: str, country_focus: str = "") -> bool:
+    """Return True if the location could plausibly be US-based.
 
-    Hard-blocks non-US countries even when "remote" appears in the string
-    (e.g. "Remote - Argentina" must NOT pass).
+    Delegates to `screening.locations.analyze_location`. The predicate is
+    deliberately "not confirmed non-US" rather than "confirmed US": a bare
+    "Remote" or an unrecognised place name is ambiguous, and dropping it costs
+    an application the owner might have wanted. Callers that need the finer
+    verdict should use `analyze_location` directly and read `.classification`.
+
+    Retained with this name and return type because nineteen source adapters
+    and `_dispatch_results` call it.
     """
-    loc = (location or "").strip().lower()
-    if not loc or loc == "unknown location":
-        return False
-
-    # Hard-block any location containing a known non-US country name
-    for country in _NON_US_COUNTRIES:
-        if country in loc:
-            return False
-
-    if "united states" in loc or "u.s." in loc:
-        return True
-    if re.search(r"\busa\b", loc):
-        return True
-    if re.search(r"\bus\b", loc):
-        return True
-    # Accept remote jobs that aren't tied to a non-US country (checked above)
-    if "remote" in loc:
-        return True
-    if "washington, dc" in loc or "district of columbia" in loc:
-        return True
-    # City, State abbreviation — e.g. "Seattle, WA"
-    m = re.search(r",\s*([a-z]{2})(\b|[^a-z])", loc)
-    if m and m.group(1) in US_STATE_ABBRS:
-        return True
-    return False
+    from ..screening.locations import analyze_location
+    return analyze_location(location, country_focus).is_plausibly_us
 
 
 class BaseSource(ABC):
