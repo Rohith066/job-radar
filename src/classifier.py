@@ -60,7 +60,14 @@ def _score_for(t: TitleAnalysis) -> int:
     if t.classification == "NO":
         return _SCORE_REJECT
     target = t.role_family in TARGET_FAMILIES
-    if t.seniority == "entry":
+    # Entry seniority earns the entry scores only when the analyzer said YES.
+    # `titles.analyze_title` deliberately holds an entry-marked adjacent or
+    # technical_other title at MAYBE; returning 85 for it here broke the
+    # invariant stated above — main.py relabels score >= 70 as "yes" — and
+    # re-promoted exactly the titles the analyzer had held back. It is why the
+    # dashboard showed `Plumbing Engineer I` and `Entry Level NVM Reliability
+    # Lab Engineer` at "Score 85".
+    if t.seniority == "entry" and t.classification == "YES":
         return _SCORE_ENTRY_TARGET if target else _SCORE_ENTRY_SECONDARY
     if t.classification == "YES":
         return _SCORE_TARGET if target else _SCORE_SECONDARY

@@ -446,7 +446,15 @@ def analyze_title(title: str) -> TitleAnalysis:
 
     if level == 1:
         codes.append(R.LEVEL_ONE_TITLE)
-        return TitleAnalysis(t, family, "entry", 1, "YES", tuple(codes), track)
+        # The same family guard the explicit-entry-marker branch above applies.
+        # It was missing here, and that asymmetry is what let `Plumbing
+        # Engineer I` classify YES/entry: "engineer" put it in
+        # `technical_other`, the "I" supplied a level, and nothing asked
+        # whether the occupation was the candidate's. It reached legacy score
+        # 85 and screening STRONG on that basis alone. A roman numeral states
+        # the seniority of a role, never what the role is.
+        cls = "YES" if (family in TARGET_FAMILIES or family in SECONDARY_FAMILIES) else "MAYBE"
+        return TitleAnalysis(t, family, "entry", 1, cls, tuple(codes), track)
 
     if level == 2:
         # Explicitly ambiguous per spec — never blindly rejected.

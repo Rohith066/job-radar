@@ -15,26 +15,19 @@ from .fit import analyze_fit, FitResult
 from .priority import application_priority, ApplicationPriority, APPLY_FIRST, HIGH, MEDIUM, REVIEW, LOW
 from .queue import ApplicationQueue
 from ..matching import ontology
-from ..screening import analyze_title, analyze_location, analyze_experience, score_job
+from ..screening import (analyze_title, analyze_location, analyze_experience,
+                         analyze_relevance, score_job)
 
 DEFAULT_LIMIT = 15
 MAX_PER_COMPANY = 2          # mirrors scripts/build_shortlist.py's existing cap
 
-_DATE_FORMATS = ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%d"]
-
-
-def _parse_posted(posted: str):
-    for fmt in _DATE_FORMATS:
-        try:
-            dt = datetime.strptime((posted or "")[:26], fmt)
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-        except (ValueError, TypeError):
-            continue
-    return None
-
-
-def _age_str(posted: str) -> str:
-    dt = _parse_posted(posted)
+def _age_str(posted: str, observed_at=None) -> str:
+    # The orchestrator's parser, not a local copy: a narrower copy here showed
+    # every Workday relative date as "date unknown". Imported inside the
+    # function: src.main imports this package, so a module-level import would
+    # be circular. `observed_at` is the row's last_seen — see _parse_posted.
+    from ..main import _parse_posted
+    dt = _parse_posted(posted, observed_at)
     if not dt:
         return "date unknown"
     h = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
@@ -51,6 +44,8 @@ class QueueEntry:
     screening: object
     fit: FitResult
     priority: ApplicationPriority
+    relevance: object = None
+    family: str = ""
 
     @property
     def score(self) -> int:
@@ -59,12 +54,19 @@ class QueueEntry:
 
 def evaluate_job(row: dict, resume_skills: set[str]) -> Optional[QueueEntry]:
     """Run the full Phase 1 + Phase 2 assessment for one stored job row."""
+    from ..main import _parse_posted   # the parser discovery scored with; see _age_str
     title = analyze_title(row.get("title") or "")
     location = analyze_location(row.get("location") or "", row.get("country_focus") or "")
     jd = row.get("description") or ""
     experience = analyze_experience(jd)
+    relevance = analyze_relevance(row.get("title") or "", jd, role_family=title.role_family)
+    # A stored relative date is anchored to when it was observed (last_seen);
+    # a row without one — a job just scraped — resolves against now, exactly
+    # as discovery did.
     screening = score_job(title=title, location=location, experience=experience,
-                          posted_at=_parse_posted(row.get("posted") or ""))
+                          posted_at=_parse_posted(row.get("posted") or "",
+                                                  row.get("last_seen")),
+                          relevance=relevance)
 
     jd_canonicals = ontology.extract_canonical_skills(jd) if jd else {}
     matched = {c for c in jd_canonicals if c in resume_skills}
@@ -84,7 +86,8 @@ def evaluate_job(row: dict, resume_skills: set[str]) -> Optional[QueueEntry]:
         location_class=location.classification,
         ghost_level="",
     )
-    return QueueEntry(job=row, screening=screening, fit=fit, priority=priority)
+    return QueueEntry(job=row, screening=screening, fit=fit, priority=priority,
+                      relevance=relevance, family=title.role_family)
 
 
 def build_queue(db, *, limit: int = DEFAULT_LIMIT, resume_text: str = "",
@@ -115,7 +118,7 @@ def build_queue(db, *, limit: int = DEFAULT_LIMIT, resume_text: str = "",
     excluded = set() if include_acted else q.excluded_keys()
 
     rows = db._conn.execute(
-        "SELECT key, company, title, location, url, posted, description, "
+        "SELECT key, company, title, location, url, posted, last_seen, description, "
         "       resume_match, priority, opportunity_score, role_family, location_class "
         "FROM jobs WHERE priority IN ('APPLY_NOW','STRONG','REVIEW') OR priority = '' "
         "ORDER BY last_seen DESC LIMIT 4000"
@@ -126,8 +129,10 @@ def build_queue(db, *, limit: int = DEFAULT_LIMIT, resume_text: str = "",
         row = dict(r)
         if row["key"] in excluded:
             continue
-        # Same eligibility gate as Phase 1 alerting.
-        if enforce_age and _is_too_old(row.get("posted") or ""):
+        # Same eligibility gate as Phase 1 alerting, with a stored relative
+        # date anchored to the moment it was observed.
+        if enforce_age and _is_too_old(row.get("posted") or "",
+                                       observed_at=row.get("last_seen")):
             continue
         e = evaluate_job(row, resume_skills)
         if e and e.priority.is_actionable:
@@ -160,7 +165,8 @@ def render_queue(entries: list[QueueEntry], *, show_url: bool = True) -> str:
     for i, e in enumerate(entries, 1):
         j, f, p = e.job, e.fit, e.priority
         out.append(f"{i:>2}. {p.application_priority_score} — {j['title']} — {j['company']}")
-        out.append(f"    {p.priority}   {_age_str(j.get('posted') or '')}   {j.get('location') or '?'}")
+        out.append(f"    {p.priority}   {_age_str(j.get('posted') or '', j.get('last_seen'))}"
+                   f"   {j.get('location') or '?'}")
         out.append(f"    screening {p.screening_score} · resume fit {p.resume_fit_score} "
                    f"· priority {p.application_priority_score}")
         good = list(f.matched_required_skills[:4]) + list(f.matched_preferred_skills[:2])

@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .matching.config import BAND_STRONG, BAND_MODERATE
+from .screening import analyze_relevance, analyze_title, OUT_OF_SCOPE, AMBIGUOUS
 
 log = logging.getLogger(__name__)
 
@@ -181,18 +182,28 @@ function renderJobs(jobs) {{
     return;
   }}
 
-  const yes   = jobs.filter(j => j.label === 'yes');
-  const maybe = jobs.filter(j => j.label === 'maybe');
+  // An occupation that could not be established is never a "strong match",
+  // whatever its legacy label says.
+  const yes   = jobs.filter(j => j.label === 'yes' && j.role_relevance !== 'AMBIGUOUS');
+  const maybe = jobs.filter(j => !(j.label === 'yes' && j.role_relevance !== 'AMBIGUOUS'));
 
   let html = '';
 
   function section(list, headCls, headText) {{
     if (!list.length) return '';
     let cards = list.map(j => {{
-      const scoreBadge = badge('Score ' + j.score, 'badge-score');
+      // Three separate concepts, three separate badges. The old "Score" badge
+      // was a title-only proxy (it showed Plumbing Engineer I at 85), and the
+      // old "Match N%" read as "N% good job for you" when it is lexical
+      // resume overlap. Neither may stand in for whether the role is relevant.
+      const relBadge = badge('Role: ' + (j.role_relevance || '?'),
+        j.role_relevance === 'TARGET' ? 'badge-match-hi'
+          : j.role_relevance === 'ADJACENT' ? 'badge-match-mid' : 'badge-match-lo');
+      const scoreBadge = j.priority
+        ? badge('Priority ' + j.priority + ' ' + (j.opportunity_score || 0), 'badge-score') : '';
       const rm = j.resume_match || 0;
       const matchBadge = rm > 0
-        ? badge('Match ' + rm + '%', rm >= __BAND_STRONG__ ? 'badge-match-hi' : rm >= __BAND_MODERATE__ ? 'badge-match-mid' : 'badge-match-lo')
+        ? badge('Resume overlap ' + rm + '%', rm >= __BAND_STRONG__ ? 'badge-match-hi' : rm >= __BAND_MODERATE__ ? 'badge-match-mid' : 'badge-match-lo')
         : '';
       const wt         = workBadge(j.work_type || '');
       const sal        = j.salary ? `<span style="color:#15803d;font-weight:600;margin-left:6px;">💰 ${{j.salary}}</span>` : '';
@@ -209,8 +220,9 @@ function renderJobs(jobs) {{
       return `
       <div class="card ${{j.label}}${{j.feedback && j.feedback !== 'applied' ? ' done' : ''}}">
         <div class="job-info">
-          <div class="job-title">${{j.company}} — ${{j.title}} ${{scoreBadge}}${{matchBadge}}${{wt}}</div>
+          <div class="job-title">${{j.company}} — ${{j.title}} ${{relBadge}}${{scoreBadge}}${{matchBadge}}${{wt}}</div>
           <div class="job-meta">${{j.location}}${{posted}}${{sal}}</div>
+          <div class="job-meta">${{j.relevance_explain || ''}}</div>
           <a class="job-link" href="${{j.url}}" target="_blank">View Job →</a>
         </div>
         <div class="actions">${{fb}}</div>
@@ -302,7 +314,19 @@ class _Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 def _get_recent_jobs() -> list[dict]:
-    """Return recent YES/MAYBE jobs with any existing feedback."""
+    """Return recent YES/MAYBE jobs with any existing feedback.
+
+    Role relevance is computed live rather than read from the database: rows
+    already stored were scored before the relevance gate existed, and their
+    `label` / `score` columns still carry the promotion that put Plumbing
+    Engineer I on this board. OUT_OF_SCOPE jobs are withheld unless the user
+    has already acted on one, in which case its history must stay visible.
+
+    The title verdict is recomputed for the same reason: rows first seen before
+    Phase 1 screening (blank `priority`) were labelled before the seniority
+    veto existed, which put Senior Manager and Lead Architect titles under
+    Strong Matches. A title classified NO is withheld on the same terms.
+    """
     if not _db:
         return []
 
@@ -310,6 +334,7 @@ def _get_recent_jobs() -> list[dict]:
         """SELECT j.key, j.company, j.title, j.url, j.location,
                   j.posted, j.score, j.label, j.work_type, j.salary,
                   COALESCE(j.resume_match, 0) as resume_match,
+                  j.priority, j.opportunity_score, j.description,
                   f.action as feedback
            FROM jobs j
            LEFT JOIN (
@@ -324,7 +349,20 @@ def _get_recent_jobs() -> list[dict]:
            LIMIT 200"""
     ).fetchall()
 
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        jd = d.pop("description", "") or ""
+        ta = analyze_title(d["title"])
+        if ta.classification == "NO" and not d.get("feedback"):
+            continue
+        rel = analyze_relevance(d["title"], jd, role_family=ta.role_family)
+        if rel.state == OUT_OF_SCOPE and not d.get("feedback"):
+            continue
+        d["role_relevance"] = rel.state
+        d["relevance_explain"] = rel.explain()
+        out.append(d)
+    return out
 
 
 # ---------------------------------------------------------------------------

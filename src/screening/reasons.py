@@ -70,6 +70,12 @@ NO_POSTED_DATE         = "NO_POSTED_DATE"
 # ── Recall protection ──────────────────────────────────────────────────────
 TARGET_ROLE_RECALL_FLOOR = "TARGET_ROLE_RECALL_FLOOR"
 
+# ── Role relevance (occupational universe) ─────────────────────────────────
+RELEVANCE_TARGET       = "RELEVANCE_TARGET"
+RELEVANCE_ADJACENT     = "RELEVANCE_ADJACENT"
+RELEVANCE_AMBIGUOUS    = "RELEVANCE_AMBIGUOUS"
+RELEVANCE_OUT_OF_SCOPE = "RELEVANCE_OUT_OF_SCOPE"
+
 _TEXT: dict[str, str] = {
     ENTRY_LEVEL_EXPLICIT:  "Explicit entry-level title",
     NEW_GRAD_EXPLICIT:     "New grad title",
@@ -97,6 +103,10 @@ _TEXT: dict[str, str] = {
     ROLE_FAMILY_AMBIGUOUS: "Technical role, family unclear",
     ROLE_FAMILY_UNRELATED: "Role family outside the search",
     ROLE_FAMILY_UNKNOWN:   "Role family not recognised",
+    RELEVANCE_TARGET:       "Squarely in the candidate's career universe",
+    RELEVANCE_ADJACENT:     "Neighbouring role — plausible application",
+    RELEVANCE_AMBIGUOUS:    "Occupation could not be established — needs a JD",
+    RELEVANCE_OUT_OF_SCOPE: "A different occupation entirely",
     US_CONFIRMED:          "US location confirmed",
     US_REMOTE_CONFIRMED:   "US Remote confirmed",
     US_REMOTE_VIA_BOARD:   "Remote on a US-focused board",
