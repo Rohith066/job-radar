@@ -200,6 +200,7 @@ _DATE_FORMATS = [
     "%Y-%m-%dT%H:%M:%S%z",
     "%Y-%m-%dT%H:%M:%SZ",
     "%Y-%m-%dT%H:%M:%S.%f%z",
+    "%Y-%m-%dT%H:%M:%S",   # naive ISO (Remotive) — read as UTC, like "%Y-%m-%d"
     "%Y-%m-%d",
     "%B %d, %Y",       # "March 14, 2026"
     "%b %d, %Y",       # "Mar 14, 2026"
@@ -208,10 +209,12 @@ _DATE_FORMATS = [
 ]
 
 # Relative date patterns: "2 days ago", "3 hours ago", "1 week ago", "just now", etc.
+# The optional "+" is Workday's "Posted 30+ Days Ago". The number is a floor, so
+# it resolves to exactly 30 days — understating the age, never overstating it.
 _RELATIVE_RE = re.compile(
     r"""
     (?:
-        (?P<num>\d+)\s*
+        (?P<num>\d+)\+?\s*
         (?P<unit>second|minute|hour|day|week|month)s?\s+ago
       | (?P<today>today|just\s+now|moments?\s+ago)
       | (?P<yesterday>yesterday)
@@ -223,10 +226,28 @@ _RELATIVE_RE = re.compile(
 )
 
 
-def _parse_posted(posted: str) -> Optional[datetime]:
+def _as_utc(ts) -> Optional[datetime]:
+    """A datetime or ISO-8601 string as an aware UTC datetime; empty → None."""
+    if ts is None or ts == "":
+        return None
+    dt = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _parse_posted(posted: str, observed_at=None) -> Optional[datetime]:
+    """Resolve a board's posted-date string to an instant.
+
+    Relative strings ("Posted Today", "Posted 2 Days Ago") are relative to the
+    moment they were *observed*, not the moment they are read. At discovery the
+    two coincide, so `observed_at` defaults to now. A stored row must pass the
+    time its `posted` value was written — `jobs.last_seen`, which
+    `Database.mark_job_seen` sets in the same upsert as `posted` — or a
+    "Posted Today" row scraped on Sep 2 reads as posted today forever.
+    Absolute dates ignore `observed_at`.
+    """
     if not posted:
         return None
-    now = datetime.now(timezone.utc)
+    now = _as_utc(observed_at) or datetime.now(timezone.utc)
     s = str(posted).strip()
 
     # Try absolute date formats first
@@ -340,15 +361,24 @@ def priority_rank_key(j: "Job") -> tuple:
     )
 
 
-def _is_too_old(posted: str, max_days: int = MAX_JOB_AGE_DAYS) -> bool:
+def _is_too_old(posted: str, max_days: int = MAX_JOB_AGE_DAYS, *,
+                observed_at=None) -> bool:
     """Return True if job was posted more than max_days ago.
 
-    If the date cannot be parsed at all, the job is filtered OUT (strict mode)
-    to prevent old jobs with unparseable dates from slipping through forever.
+    `observed_at` anchors a relative posted string to when it was scraped (see
+    `_parse_posted`); the age itself is always measured against now. Discovery
+    omits it; anything re-reading a stored row passes the row's `last_seen`.
+
+    A date that cannot be parsed is KEPT, not filtered: some sources (Goldman
+    Sachs, IBM, some Workday boards) publish postings with no date at all, and
+    dropping those would silently remove them. The price is that a format
+    `_parse_posted` does not understand is treated as brand new — which is how
+    "Posted 30+ Days Ago" leaked — so a new date format needs a parser case,
+    not a stricter filter.
     """
-    dt = _parse_posted(posted)
+    dt = _parse_posted(posted, observed_at)
     if dt is None:
-        # No posted date at all → treat as brand new (source doesn't provide dates)
+        # Undated or unparseable → kept (see docstring)
         return False
     return dt < datetime.now(timezone.utc) - timedelta(days=max_days)
 
