@@ -15,7 +15,8 @@ from .fit import analyze_fit, FitResult
 from .priority import application_priority, ApplicationPriority, APPLY_FIRST, HIGH, MEDIUM, REVIEW, LOW
 from .queue import ApplicationQueue
 from ..matching import ontology
-from ..screening import analyze_title, analyze_location, analyze_experience, score_job
+from ..screening import (analyze_title, analyze_location, analyze_experience,
+                         analyze_relevance, score_job)
 
 DEFAULT_LIMIT = 15
 MAX_PER_COMPANY = 2          # mirrors scripts/build_shortlist.py's existing cap
@@ -43,6 +44,8 @@ class QueueEntry:
     screening: object
     fit: FitResult
     priority: ApplicationPriority
+    relevance: object = None
+    family: str = ""
 
     @property
     def score(self) -> int:
@@ -56,12 +59,14 @@ def evaluate_job(row: dict, resume_skills: set[str]) -> Optional[QueueEntry]:
     location = analyze_location(row.get("location") or "", row.get("country_focus") or "")
     jd = row.get("description") or ""
     experience = analyze_experience(jd)
+    relevance = analyze_relevance(row.get("title") or "", jd, role_family=title.role_family)
     # A stored relative date is anchored to when it was observed (last_seen);
     # a row without one — a job just scraped — resolves against now, exactly
     # as discovery did.
     screening = score_job(title=title, location=location, experience=experience,
                           posted_at=_parse_posted(row.get("posted") or "",
-                                                  row.get("last_seen")))
+                                                  row.get("last_seen")),
+                          relevance=relevance)
 
     jd_canonicals = ontology.extract_canonical_skills(jd) if jd else {}
     matched = {c for c in jd_canonicals if c in resume_skills}
@@ -81,7 +86,8 @@ def evaluate_job(row: dict, resume_skills: set[str]) -> Optional[QueueEntry]:
         location_class=location.classification,
         ghost_level="",
     )
-    return QueueEntry(job=row, screening=screening, fit=fit, priority=priority)
+    return QueueEntry(job=row, screening=screening, fit=fit, priority=priority,
+                      relevance=relevance, family=title.role_family)
 
 
 def build_queue(db, *, limit: int = DEFAULT_LIMIT, resume_text: str = "",

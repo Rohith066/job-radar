@@ -19,6 +19,12 @@ from . import reasons as R
 from .titles import TitleAnalysis, TARGET_FAMILIES, ADJACENT_FAMILIES
 from .locations import LocationAnalysis, US, US_REMOTE, NON_US, AMBIGUOUS
 from .experience import ExperienceAnalysis, REJECT_FLOOR, STRONG_NEGATIVE_FLOOR
+from .relevance import (
+    RelevanceResult,
+    OUT_OF_SCOPE as REL_OUT_OF_SCOPE,
+    AMBIGUOUS as REL_AMBIGUOUS,
+    ADJACENT as REL_ADJACENT,
+)
 
 # ---------------------------------------------------------------------------
 # Score table — the complete set of constants. Nothing else moves the score.
@@ -88,6 +94,12 @@ ADJACENT_CEILING = BAND_STRONG - 1
 # penalties compound to below 55 on their own. The floor lifts such jobs to
 # REVIEW and no further: it protects recall without asserting the job is US.
 RECALL_FLOOR_EXPERIENCE_MAX = 4
+
+# A job whose occupation could not be established must stay reviewable and no
+# more. It is not rejected — the evidence is missing, not negative — but it
+# cannot present as a strong recommendation, because nothing has shown it is
+# the candidate's kind of work. Absence of information is not fit.
+AMBIGUOUS_RELEVANCE_CEILING = BAND_STRONG - 1
 
 APPLY_NOW = "APPLY_NOW"
 STRONG    = "STRONG"
@@ -176,12 +188,19 @@ def score_job(
     location: LocationAnalysis,
     experience: ExperienceAnalysis | None = None,
     posted_at: datetime | None = None,
+    relevance: RelevanceResult | None = None,
 ) -> OpportunityScore:
     """Combine the three analyses plus freshness into a 0-100 score.
 
     Hard exclusions short-circuit to REJECT before any arithmetic runs, which
     is what guarantees requirement 16: no accumulation of freshness, location
     or family points can lift a senior or managerial title into an alert.
+
+    `relevance` joins that set of absolutes. It is optional so every existing
+    caller keeps working, but when supplied an OUT_OF_SCOPE verdict rejects
+    before the arithmetic, exactly like the seniority veto — the whole point
+    being that no accumulation of freshness, US location or entry-level
+    wording can lift a different occupation onto the board.
     """
     codes: list[str] = []
     pos: list[str] = []
@@ -189,6 +208,10 @@ def score_job(
     warn: list[str] = []
 
     # ── Hard exclusions ────────────────────────────────────────────────────
+    if relevance is not None and relevance.state == REL_OUT_OF_SCOPE:
+        why = (R.RELEVANCE_OUT_OF_SCOPE,) + tuple(relevance.reasons)
+        return OpportunityScore(0, REJECT, (), why, (), why)
+
     if title.classification == "NO":
         neg.extend(title.reasons)
         return OpportunityScore(0, REJECT, (), tuple(title.reasons), (), tuple(title.reasons))
@@ -282,6 +305,29 @@ def score_job(
     if title.role_family in ADJACENT_FAMILIES and score > ADJACENT_CEILING:
         score = ADJACENT_CEILING
         warn.append(R.ROLE_FAMILY_ADJACENT)
+
+    # ── Unestablished occupation is capped at review ───────────────────────
+    # Applied after the arithmetic rather than before it, so the reason codes
+    # still record what the job *did* earn. The cap is what stops a fresh,
+    # US-based, entry-titled posting of unknown occupation presenting as a
+    # strong recommendation on those three facts alone.
+    if (relevance is not None and relevance.state == REL_AMBIGUOUS
+            and score > AMBIGUOUS_RELEVANCE_CEILING):
+        score = AMBIGUOUS_RELEVANCE_CEILING
+        warn.append(R.RELEVANCE_AMBIGUOUS)
+
+    # ── Low-level specialisations are review-only ──────────────────────────
+    # Reuses the existing ADJACENT_CEILING rather than inventing a threshold:
+    # the project already decided "adjacent occupation = visible, review only"
+    # for quant / research analysts, and an ML-compiler or kernel-performance
+    # role stands in the same relation to the candidate's applied data/ML
+    # evidence. Plain relevance-ADJACENT (BI engineer, geospatial analyst) is
+    # deliberately NOT capped — that would suppress the recall this gate must
+    # protect.
+    if (relevance is not None and relevance.state == REL_ADJACENT
+            and relevance.specialisation_anchors and score > ADJACENT_CEILING):
+        score = ADJACENT_CEILING
+        warn.append(R.RELEVANCE_ADJACENT)
 
     # ── Recall floor for ambiguous-location target roles ───────────────────
     exp_within_ceiling = (

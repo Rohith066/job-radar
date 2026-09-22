@@ -32,7 +32,7 @@ from .config import Config
 from .database import Database
 from .notifier import CompositeNotifier, EmailNotifier, SlackNotifier, DiscordNotifier
 from .sources.base import Job, job_fingerprint
-from .screening import analyze_title, analyze_location, analyze_experience, score_job
+from .screening import analyze_title, analyze_location, analyze_experience, analyze_relevance, score_job
 from .screening.scoring import APPLY_NOW, STRONG, REVIEW, LOW, REJECT
 from .apply.fit import analyze_fit
 from .apply.priority import application_priority
@@ -325,21 +325,26 @@ def screen_job(j: "Job"):
     already on the Job. Also writes the structured sub-verdicts back onto the
     job so the email and the DB can show them without recomputing.
     """
+    jd = getattr(j, "description", "") or ""
     title = analyze_title(j.title)
     location = analyze_location(j.location, getattr(j, "country_focus", ""))
-    experience = analyze_experience(getattr(j, "description", "") or "")
+    experience = analyze_experience(jd)
+    relevance = analyze_relevance(j.title, jd, role_family=title.role_family)
 
     j.seniority      = title.seniority
     j.role_family    = title.role_family
     j.location_class = location.classification
     j.experience_min = experience.min_years
     j.experience_max = experience.max_years
+    j.role_relevance = relevance.state
+    j.relevance_explanation = relevance.explain()
 
     return score_job(
         title=title,
         location=location,
         experience=experience,
         posted_at=_parse_posted(j.posted),
+        relevance=relevance,
     )
 
 
